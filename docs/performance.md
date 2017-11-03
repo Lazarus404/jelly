@@ -52,9 +52,10 @@ Reference points:
 
 ## Current “known hot” areas
 
-- **Dispatch loop** in `vm/src/vm/exec.c`
-  - Minimize branches in per-op handlers.
-  - Prefer straight-line typed loads/stores.
+- **Interpreter loop** in `vm/src/vm/interp.c` + `vm/src/vm/ops/exec_loop.c`
+  - Avoid per-instruction overhead that does not contribute to semantics.
+  - Keep a reference execution path for conformance testing.
+  - Prefer straight-line typed loads/stores in hot opcodes.
 
 - **Object/map operations** (`Object` / atom keyed)
   - Hashing, probing, and rehash behavior under GC pressure.
@@ -73,9 +74,3 @@ Short-term (microbench-style):
 Longer-term (macrobench-style):
 
 - End-to-end bytecode programs (compiler-emitted), measured for wall time + allocations + GC.
-
-## Notes / cautions
-
-- Benchmark with and without sanitizers.
-- Prefer `-O3` for performance runs, but keep CI at safer flags.
-- Avoid conflating “fewer opcodes” with “faster”; measure decode/dispatch costs directly.

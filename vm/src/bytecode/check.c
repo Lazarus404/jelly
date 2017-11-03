@@ -1,4 +1,34 @@
-#include <jelly/check.h>
+/**
+ * Copyright 2017 - Jahred Love
+ *
+ * Redistribution and use in source and binary forms, with or without modification,
+ * are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice, this
+ * list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice, this
+ * list of conditions and the following disclaimer in the documentation and/or other
+ * materials provided with the distribution.
+ *
+ * 3. Neither the name of the copyright holder nor the names of its contributors may
+ * be used to endorse or promote products derived from this software without specific
+ * prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS “AS IS” AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+ * IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+ * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+ * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ */
+
+#include <jelly/internal.h>
+#include <stdio.h>
 
 /*
   Bytecode instruction validation that depends on opcode semantics.
@@ -7,6 +37,10 @@
   concerns: `loader.c` parses and owns memory; `check.c` validates instruction
   semantics against the typed register model.
 */
+
+static size_t slot_size(const jelly_bc_module* m, jelly_type_id tid) {
+  return jelly_slot_size(m->types[tid].kind);
+}
 
 static jelly_bc_result ok(void) {
   jelly_bc_result r = { JELLY_BC_OK, "ok", 0 };
@@ -31,6 +65,9 @@ jelly_bc_result jelly_bc_validate_insn(const jelly_bc_module* m,
                                       uint32_t nfuncs) {
   const uint8_t op = ins->op;
 
+  (void)ninsns;
+  (void)nfuncs;
+
   // Most ops use ins->a as destination.
   switch((jelly_op)op) {
     case JOP_NOP:
@@ -41,12 +78,17 @@ jelly_bc_result jelly_bc_validate_insn(const jelly_bc_module* m,
     case JOP_MOV:
       if(ins->a >= nregs || ins->b >= nregs) return err(JELLY_BC_BAD_FORMAT, "mov reg out of range", 0);
       if(reg_types[ins->a] != reg_types[ins->b]) {
-        // Allow nominal object subtypes to move into plain Object slots (and vice versa).
-        // The VM treats all Object values uniformly at runtime; the extra type-id precision
-        // is for compile-time checking only.
         jelly_type_kind ka = rk(m, reg_types, ins->a);
         jelly_type_kind kb = rk(m, reg_types, ins->b);
-        if(ka != JELLY_T_OBJECT || kb != JELLY_T_OBJECT) {
+        size_t sa = slot_size(m, reg_types[ins->a]);
+        size_t sb = slot_size(m, reg_types[ins->b]);
+        /* Allow when kinds match (nominal subtypes). */
+        if(ka == kb) {
+          /* same kind, different type ids - ok */
+        } else if(sa == sb && sa > 0) {
+          /* Same slot size: raw copy. Used for phi-elim across type boundaries
+           * (e.g. Bytes from different modules). Dynamic<->ptr uses same layout. */
+        } else {
           return err(JELLY_BC_BAD_FORMAT, "mov type mismatch", 0);
         }
       }
@@ -65,9 +107,14 @@ jelly_bc_result jelly_bc_validate_insn(const jelly_bc_module* m,
       if(tgt < 0 || tgt > (int32_t)ninsns) return err(JELLY_BC_BAD_FORMAT, "jmp_if target out of range", 0);
       return ok();
     }
+    case JOP_ASSERT:
+      if(ins->a >= nregs) return err(JELLY_BC_BAD_FORMAT, "assert cond reg out of range", 0);
+      if(rk(m, reg_types, ins->a) != JELLY_T_BOOL) return err(JELLY_BC_BAD_FORMAT, "assert cond must be bool", 0);
+      return ok();
     case JOP_TRY: {
       if(ins->a >= nregs) return err(JELLY_BC_BAD_FORMAT, "try reg out of range", 0);
       if(rk(m, reg_types, ins->a) != JELLY_T_DYNAMIC) return err(JELLY_BC_BAD_FORMAT, "try dst must be Dynamic", 0);
+      if(ins->b > 1) return err(JELLY_BC_BAD_FORMAT, "try b must be 0/1 (trap_only flag)", 0);
       int32_t d = (int32_t)ins->imm;
       int32_t tgt = (int32_t)(pc + 1u) + d;
       if(tgt < 0 || tgt > (int32_t)ninsns) return err(JELLY_BC_BAD_FORMAT, "try catch target out of range", 0);
@@ -82,7 +129,8 @@ jelly_bc_result jelly_bc_validate_insn(const jelly_bc_module* m,
     case JOP_CLOSURE: {
       if(ins->a >= nregs || ins->b >= nregs) return err(JELLY_BC_BAD_FORMAT, "closure reg out of range", 0);
       if(rk(m, reg_types, ins->a) != JELLY_T_FUNCTION) return err(JELLY_BC_BAD_FORMAT, "closure dst must be function", 0);
-      if(ins->imm >= nfuncs) return err(JELLY_BC_BAD_FORMAT, "closure func index out of range", 0);
+      /* Logical index: 0=native, 1..nfuncs=bytecode */
+      if(ins->imm > nfuncs) return err(JELLY_BC_BAD_FORMAT, "closure func index out of range", 0);
       uint32_t first = ins->b;
       uint32_t ncaps = ins->c;
       if(first + ncaps > nregs) return err(JELLY_BC_BAD_FORMAT, "closure capture range out of range", 0);
@@ -94,7 +142,8 @@ jelly_bc_result jelly_bc_validate_insn(const jelly_bc_module* m,
       return ok();
     case JOP_CALL: {
       if(ins->a >= nregs || ins->b >= nregs) return err(JELLY_BC_BAD_FORMAT, "call reg out of range", 0);
-      if(ins->imm >= nfuncs) return err(JELLY_BC_BAD_FORMAT, "call func index out of range", 0);
+      /* Logical index: 0=native, 1..nfuncs=bytecode */
+      if(ins->imm > nfuncs) return err(JELLY_BC_BAD_FORMAT, "call func index out of range", 0);
       // args are in a contiguous range [b, b+c)
       uint32_t first = ins->b;
       uint32_t nargs = ins->c;
@@ -123,6 +172,14 @@ jelly_bc_result jelly_bc_validate_insn(const jelly_bc_module* m,
         int32_t v = (int32_t)ins->imm;
         if(v < -32768 || v > 32767) return err(JELLY_BC_BAD_FORMAT, "const_i32 out of range for i16", 0);
       }
+      return ok();
+    case JOP_CONST_I8_IMM:
+      if(ins->a >= nregs) return err(JELLY_BC_BAD_FORMAT, "const reg out of range", 0);
+      if(rk(m, reg_types, ins->a) != JELLY_T_I8) return err(JELLY_BC_BAD_FORMAT, "const_i8_imm dst must be i8", 0);
+      return ok();
+    case JOP_CONST_F16:
+      if(ins->a >= nregs) return err(JELLY_BC_BAD_FORMAT, "const reg out of range", 0);
+      if(rk(m, reg_types, ins->a) != JELLY_T_F16) return err(JELLY_BC_BAD_FORMAT, "const_f16 dst must be f16", 0);
       return ok();
     case JOP_CONST_BOOL:
       if(ins->a >= nregs) return err(JELLY_BC_BAD_FORMAT, "const reg out of range", 0);
@@ -160,15 +217,25 @@ jelly_bc_result jelly_bc_validate_insn(const jelly_bc_module* m,
     case JOP_CONST_FUN:
       if(ins->a >= nregs) return err(JELLY_BC_BAD_FORMAT, "const reg out of range", 0);
       if(rk(m, reg_types, ins->a) != JELLY_T_FUNCTION) return err(JELLY_BC_BAD_FORMAT, "const_fun dst must be function", 0);
-      if(ins->imm >= nfuncs) return err(JELLY_BC_BAD_FORMAT, "const_fun func index out of range", 0);
+      /* Logical index: 0=native, 1..nfuncs=bytecode */
+      if(ins->imm > nfuncs) return err(JELLY_BC_BAD_FORMAT, "const_fun func index out of range", 0);
       return ok();
     case JOP_ADD_I32:
     case JOP_SUB_I32:
     case JOP_MUL_I32:
       if(ins->a >= nregs || ins->b >= nregs || ins->c >= nregs) return err(JELLY_BC_BAD_FORMAT, "arith reg out of range", 0);
-      if(rk(m, reg_types, ins->a) != JELLY_T_I32 ||
-         rk(m, reg_types, ins->b) != JELLY_T_I32 ||
-         rk(m, reg_types, ins->c) != JELLY_T_I32) return err(JELLY_BC_BAD_FORMAT, "arith i32 types required", 0);
+      if((rk(m, reg_types, ins->a) != JELLY_T_I8 && rk(m, reg_types, ins->a) != JELLY_T_I16 && rk(m, reg_types, ins->a) != JELLY_T_I32) ||
+         (rk(m, reg_types, ins->b) != JELLY_T_I8 && rk(m, reg_types, ins->b) != JELLY_T_I16 && rk(m, reg_types, ins->b) != JELLY_T_I32) ||
+         (rk(m, reg_types, ins->c) != JELLY_T_I8 && rk(m, reg_types, ins->c) != JELLY_T_I16 && rk(m, reg_types, ins->c) != JELLY_T_I32))
+        return err(JELLY_BC_BAD_FORMAT, "arith i8/i16/i32 types required", 0);
+      return ok();
+    case JOP_ADD_I32_IMM:
+    case JOP_SUB_I32_IMM:
+    case JOP_MUL_I32_IMM:
+      if(ins->a >= nregs || ins->b >= nregs) return err(JELLY_BC_BAD_FORMAT, "arith_imm reg out of range", 0);
+      if((rk(m, reg_types, ins->a) != JELLY_T_I8 && rk(m, reg_types, ins->a) != JELLY_T_I16 && rk(m, reg_types, ins->a) != JELLY_T_I32) ||
+         (rk(m, reg_types, ins->b) != JELLY_T_I8 && rk(m, reg_types, ins->b) != JELLY_T_I16 && rk(m, reg_types, ins->b) != JELLY_T_I32))
+        return err(JELLY_BC_BAD_FORMAT, "arith_imm i8/i16/i32 types required", 0);
       return ok();
     case JOP_ADD_I64:
     case JOP_SUB_I64:
@@ -181,14 +248,24 @@ jelly_bc_result jelly_bc_validate_insn(const jelly_bc_module* m,
     case JOP_ADD_F32:
     case JOP_SUB_F32:
     case JOP_MUL_F32:
+    case JOP_DIV_F32:
       if(ins->a >= nregs || ins->b >= nregs || ins->c >= nregs) return err(JELLY_BC_BAD_FORMAT, "arith reg out of range", 0);
       if(rk(m, reg_types, ins->a) != JELLY_T_F32 ||
          rk(m, reg_types, ins->b) != JELLY_T_F32 ||
          rk(m, reg_types, ins->c) != JELLY_T_F32) return err(JELLY_BC_BAD_FORMAT, "arith f32 types required", 0);
       return ok();
+    case JOP_ADD_F16:
+    case JOP_SUB_F16:
+    case JOP_MUL_F16:
+      if(ins->a >= nregs || ins->b >= nregs || ins->c >= nregs) return err(JELLY_BC_BAD_FORMAT, "arith reg out of range", 0);
+      if(rk(m, reg_types, ins->a) != JELLY_T_F16 ||
+         rk(m, reg_types, ins->b) != JELLY_T_F16 ||
+         rk(m, reg_types, ins->c) != JELLY_T_F16) return err(JELLY_BC_BAD_FORMAT, "arith f16 types required", 0);
+      return ok();
     case JOP_ADD_F64:
     case JOP_SUB_F64:
     case JOP_MUL_F64:
+    case JOP_DIV_F64:
       if(ins->a >= nregs || ins->b >= nregs || ins->c >= nregs) return err(JELLY_BC_BAD_FORMAT, "arith reg out of range", 0);
       if(rk(m, reg_types, ins->a) != JELLY_T_F64 ||
          rk(m, reg_types, ins->b) != JELLY_T_F64 ||
@@ -196,7 +273,25 @@ jelly_bc_result jelly_bc_validate_insn(const jelly_bc_module* m,
       return ok();
     case JOP_SEXT_I64:
       if(ins->a >= nregs || ins->b >= nregs) return err(JELLY_BC_BAD_FORMAT, "conv reg out of range", 0);
-      if(rk(m, reg_types, ins->a) != JELLY_T_I64 || rk(m, reg_types, ins->b) != JELLY_T_I32) return err(JELLY_BC_BAD_FORMAT, "sext_i64 types required", 0);
+      if(rk(m, reg_types, ins->a) != JELLY_T_I64) return err(JELLY_BC_BAD_FORMAT, "sext_i64 dst must be i64", 0);
+      if(rk(m, reg_types, ins->b) != JELLY_T_I8 && rk(m, reg_types, ins->b) != JELLY_T_I16 && rk(m, reg_types, ins->b) != JELLY_T_I32)
+        return err(JELLY_BC_BAD_FORMAT, "sext_i64 src must be i8/i16/i32", 0);
+      return ok();
+    case JOP_SEXT_I16:
+      if(ins->a >= nregs || ins->b >= nregs) return err(JELLY_BC_BAD_FORMAT, "conv reg out of range", 0);
+      if(rk(m, reg_types, ins->a) != JELLY_T_I16 || rk(m, reg_types, ins->b) != JELLY_T_I8)
+        return err(JELLY_BC_BAD_FORMAT, "sext_i16 dst must be i16, src i8", 0);
+      return ok();
+    case JOP_TRUNC_I8:
+      if(ins->a >= nregs || ins->b >= nregs) return err(JELLY_BC_BAD_FORMAT, "conv reg out of range", 0);
+      if(rk(m, reg_types, ins->a) != JELLY_T_I8) return err(JELLY_BC_BAD_FORMAT, "trunc_i8 dst must be i8", 0);
+      if(rk(m, reg_types, ins->b) != JELLY_T_I16 && rk(m, reg_types, ins->b) != JELLY_T_I32)
+        return err(JELLY_BC_BAD_FORMAT, "trunc_i8 src must be i16 or i32", 0);
+      return ok();
+    case JOP_TRUNC_I16:
+      if(ins->a >= nregs || ins->b >= nregs) return err(JELLY_BC_BAD_FORMAT, "conv reg out of range", 0);
+      if(rk(m, reg_types, ins->a) != JELLY_T_I16 || rk(m, reg_types, ins->b) != JELLY_T_I32)
+        return err(JELLY_BC_BAD_FORMAT, "trunc_i16 dst must be i16, src i32", 0);
       return ok();
     case JOP_I32_FROM_I64:
       if(ins->a >= nregs || ins->b >= nregs) return err(JELLY_BC_BAD_FORMAT, "conv reg out of range", 0);
@@ -226,11 +321,51 @@ jelly_bc_result jelly_bc_validate_insn(const jelly_bc_module* m,
       if(ins->a >= nregs || ins->b >= nregs) return err(JELLY_BC_BAD_FORMAT, "conv reg out of range", 0);
       if(rk(m, reg_types, ins->a) != JELLY_T_I32 || rk(m, reg_types, ins->b) != JELLY_T_F32) return err(JELLY_BC_BAD_FORMAT, "i32_from_f32 types required", 0);
       return ok();
+    case JOP_F64_FROM_F32:
+      if(ins->a >= nregs || ins->b >= nregs) return err(JELLY_BC_BAD_FORMAT, "conv reg out of range", 0);
+      if(rk(m, reg_types, ins->a) != JELLY_T_F64 || rk(m, reg_types, ins->b) != JELLY_T_F32) return err(JELLY_BC_BAD_FORMAT, "f64_from_f32 types required", 0);
+      return ok();
+    case JOP_F32_FROM_F64:
+      if(ins->a >= nregs || ins->b >= nregs) return err(JELLY_BC_BAD_FORMAT, "conv reg out of range", 0);
+      if(rk(m, reg_types, ins->a) != JELLY_T_F32 || rk(m, reg_types, ins->b) != JELLY_T_F64) return err(JELLY_BC_BAD_FORMAT, "f32_from_f64 types required", 0);
+      return ok();
+    case JOP_F16_FROM_F32:
+      if(ins->a >= nregs || ins->b >= nregs) return err(JELLY_BC_BAD_FORMAT, "conv reg out of range", 0);
+      if(rk(m, reg_types, ins->a) != JELLY_T_F16 || rk(m, reg_types, ins->b) != JELLY_T_F32) return err(JELLY_BC_BAD_FORMAT, "f16_from_f32 types required", 0);
+      return ok();
+    case JOP_F32_FROM_F16:
+      if(ins->a >= nregs || ins->b >= nregs) return err(JELLY_BC_BAD_FORMAT, "conv reg out of range", 0);
+      if(rk(m, reg_types, ins->a) != JELLY_T_F32 || rk(m, reg_types, ins->b) != JELLY_T_F16) return err(JELLY_BC_BAD_FORMAT, "f32_from_f16 types required", 0);
+      return ok();
+    case JOP_F16_FROM_I32:
+      if(ins->a >= nregs || ins->b >= nregs) return err(JELLY_BC_BAD_FORMAT, "conv reg out of range", 0);
+      if(rk(m, reg_types, ins->a) != JELLY_T_F16 || rk(m, reg_types, ins->b) != JELLY_T_I32) return err(JELLY_BC_BAD_FORMAT, "f16_from_i32 types required", 0);
+      return ok();
+    case JOP_I32_FROM_F16:
+      if(ins->a >= nregs || ins->b >= nregs) return err(JELLY_BC_BAD_FORMAT, "conv reg out of range", 0);
+      if(rk(m, reg_types, ins->a) != JELLY_T_I32 || rk(m, reg_types, ins->b) != JELLY_T_F16) return err(JELLY_BC_BAD_FORMAT, "i32_from_f16 types required", 0);
+      return ok();
+    case JOP_F32_FROM_I64:
+      if(ins->a >= nregs || ins->b >= nregs) return err(JELLY_BC_BAD_FORMAT, "conv reg out of range", 0);
+      if(rk(m, reg_types, ins->a) != JELLY_T_F32 || rk(m, reg_types, ins->b) != JELLY_T_I64) return err(JELLY_BC_BAD_FORMAT, "f32_from_i64 types required", 0);
+      return ok();
+    case JOP_I64_FROM_F32:
+      if(ins->a >= nregs || ins->b >= nregs) return err(JELLY_BC_BAD_FORMAT, "conv reg out of range", 0);
+      if(rk(m, reg_types, ins->a) != JELLY_T_I64 || rk(m, reg_types, ins->b) != JELLY_T_F32) return err(JELLY_BC_BAD_FORMAT, "i64_from_f32 types required", 0);
+      return ok();
     case JOP_EQ_I32:
       if(ins->a >= nregs || ins->b >= nregs || ins->c >= nregs) return err(JELLY_BC_BAD_FORMAT, "eq reg out of range", 0);
-      if(rk(m, reg_types, ins->a) != JELLY_T_BOOL ||
-         rk(m, reg_types, ins->b) != JELLY_T_I32 ||
-         rk(m, reg_types, ins->c) != JELLY_T_I32) return err(JELLY_BC_BAD_FORMAT, "eq_i32 types required", 0);
+      if(rk(m, reg_types, ins->a) != JELLY_T_BOOL) return err(JELLY_BC_BAD_FORMAT, "eq_i32 dst must be bool", 0);
+      if((rk(m, reg_types, ins->b) != JELLY_T_I8 && rk(m, reg_types, ins->b) != JELLY_T_I16 && rk(m, reg_types, ins->b) != JELLY_T_I32) ||
+         (rk(m, reg_types, ins->c) != JELLY_T_I8 && rk(m, reg_types, ins->c) != JELLY_T_I16 && rk(m, reg_types, ins->c) != JELLY_T_I32))
+        return err(JELLY_BC_BAD_FORMAT, "eq_i32 operands must be i8/i16/i32", 0);
+      return ok();
+    case JOP_EQ_I32_IMM:
+    case JOP_LT_I32_IMM:
+      if(ins->a >= nregs || ins->b >= nregs) return err(JELLY_BC_BAD_FORMAT, "eq/lt_imm reg out of range", 0);
+      if(rk(m, reg_types, ins->a) != JELLY_T_BOOL) return err(JELLY_BC_BAD_FORMAT, "eq/lt_imm dst must be bool", 0);
+      if(rk(m, reg_types, ins->b) != JELLY_T_I8 && rk(m, reg_types, ins->b) != JELLY_T_I16 && rk(m, reg_types, ins->b) != JELLY_T_I32)
+        return err(JELLY_BC_BAD_FORMAT, "eq/lt_imm src must be i8/i16/i32", 0);
       return ok();
     case JOP_EQ_I64:
       if(ins->a >= nregs || ins->b >= nregs || ins->c >= nregs) return err(JELLY_BC_BAD_FORMAT, "eq reg out of range", 0);
@@ -238,11 +373,23 @@ jelly_bc_result jelly_bc_validate_insn(const jelly_bc_module* m,
          rk(m, reg_types, ins->b) != JELLY_T_I64 ||
          rk(m, reg_types, ins->c) != JELLY_T_I64) return err(JELLY_BC_BAD_FORMAT, "eq_i64 types required", 0);
       return ok();
+    case JOP_LT_I64:
+      if(ins->a >= nregs || ins->b >= nregs || ins->c >= nregs) return err(JELLY_BC_BAD_FORMAT, "lt reg out of range", 0);
+      if(rk(m, reg_types, ins->a) != JELLY_T_BOOL ||
+         rk(m, reg_types, ins->b) != JELLY_T_I64 ||
+         rk(m, reg_types, ins->c) != JELLY_T_I64) return err(JELLY_BC_BAD_FORMAT, "lt_i64 types required", 0);
+      return ok();
     case JOP_EQ_F32:
       if(ins->a >= nregs || ins->b >= nregs || ins->c >= nregs) return err(JELLY_BC_BAD_FORMAT, "eq reg out of range", 0);
       if(rk(m, reg_types, ins->a) != JELLY_T_BOOL ||
          rk(m, reg_types, ins->b) != JELLY_T_F32 ||
          rk(m, reg_types, ins->c) != JELLY_T_F32) return err(JELLY_BC_BAD_FORMAT, "eq_f32 types required", 0);
+      return ok();
+    case JOP_LT_F32:
+      if(ins->a >= nregs || ins->b >= nregs || ins->c >= nregs) return err(JELLY_BC_BAD_FORMAT, "lt reg out of range", 0);
+      if(rk(m, reg_types, ins->a) != JELLY_T_BOOL ||
+         rk(m, reg_types, ins->b) != JELLY_T_F32 ||
+         rk(m, reg_types, ins->c) != JELLY_T_F32) return err(JELLY_BC_BAD_FORMAT, "lt_f32 types required", 0);
       return ok();
     case JOP_EQ_F64:
       if(ins->a >= nregs || ins->b >= nregs || ins->c >= nregs) return err(JELLY_BC_BAD_FORMAT, "eq reg out of range", 0);
@@ -250,9 +397,23 @@ jelly_bc_result jelly_bc_validate_insn(const jelly_bc_module* m,
          rk(m, reg_types, ins->b) != JELLY_T_F64 ||
          rk(m, reg_types, ins->c) != JELLY_T_F64) return err(JELLY_BC_BAD_FORMAT, "eq_f64 types required", 0);
       return ok();
+    case JOP_LT_F64:
+      if(ins->a >= nregs || ins->b >= nregs || ins->c >= nregs) return err(JELLY_BC_BAD_FORMAT, "lt reg out of range", 0);
+      if(rk(m, reg_types, ins->a) != JELLY_T_BOOL ||
+         rk(m, reg_types, ins->b) != JELLY_T_F64 ||
+         rk(m, reg_types, ins->c) != JELLY_T_F64) return err(JELLY_BC_BAD_FORMAT, "lt_f64 types required", 0);
+      return ok();
     case JOP_TO_DYN:
       if(ins->a >= nregs || ins->b >= nregs) return err(JELLY_BC_BAD_FORMAT, "dyn conv reg out of range", 0);
       if(rk(m, reg_types, ins->a) != JELLY_T_DYNAMIC) return err(JELLY_BC_BAD_FORMAT, "to_dyn dst must be Dynamic", 0);
+      return ok();
+    case JOP_FROM_DYN_I8:
+      if(ins->a >= nregs || ins->b >= nregs) return err(JELLY_BC_BAD_FORMAT, "dyn conv reg out of range", 0);
+      if(rk(m, reg_types, ins->b) != JELLY_T_DYNAMIC || rk(m, reg_types, ins->a) != JELLY_T_I8) return err(JELLY_BC_BAD_FORMAT, "from_dyn_i8 types required", 0);
+      return ok();
+    case JOP_FROM_DYN_I16:
+      if(ins->a >= nregs || ins->b >= nregs) return err(JELLY_BC_BAD_FORMAT, "dyn conv reg out of range", 0);
+      if(rk(m, reg_types, ins->b) != JELLY_T_DYNAMIC || rk(m, reg_types, ins->a) != JELLY_T_I16) return err(JELLY_BC_BAD_FORMAT, "from_dyn_i16 types required", 0);
       return ok();
     case JOP_FROM_DYN_I32:
       if(ins->a >= nregs || ins->b >= nregs) return err(JELLY_BC_BAD_FORMAT, "dyn conv reg out of range", 0);
@@ -261,6 +422,14 @@ jelly_bc_result jelly_bc_validate_insn(const jelly_bc_module* m,
     case JOP_FROM_DYN_I64:
       if(ins->a >= nregs || ins->b >= nregs) return err(JELLY_BC_BAD_FORMAT, "dyn conv reg out of range", 0);
       if(rk(m, reg_types, ins->b) != JELLY_T_DYNAMIC || rk(m, reg_types, ins->a) != JELLY_T_I64) return err(JELLY_BC_BAD_FORMAT, "from_dyn_i64 types required", 0);
+      return ok();
+    case JOP_FROM_DYN_F16:
+      if(ins->a >= nregs || ins->b >= nregs) return err(JELLY_BC_BAD_FORMAT, "dyn conv reg out of range", 0);
+      if(rk(m, reg_types, ins->b) != JELLY_T_DYNAMIC || rk(m, reg_types, ins->a) != JELLY_T_F16) return err(JELLY_BC_BAD_FORMAT, "from_dyn_f16 types required", 0);
+      return ok();
+    case JOP_FROM_DYN_F32:
+      if(ins->a >= nregs || ins->b >= nregs) return err(JELLY_BC_BAD_FORMAT, "dyn conv reg out of range", 0);
+      if(rk(m, reg_types, ins->b) != JELLY_T_DYNAMIC || rk(m, reg_types, ins->a) != JELLY_T_F32) return err(JELLY_BC_BAD_FORMAT, "from_dyn_f32 types required", 0);
       return ok();
     case JOP_FROM_DYN_F64:
       if(ins->a >= nregs || ins->b >= nregs) return err(JELLY_BC_BAD_FORMAT, "dyn conv reg out of range", 0);
@@ -292,15 +461,15 @@ jelly_bc_result jelly_bc_validate_insn(const jelly_bc_module* m,
     }
     case JOP_SPILL_PUSH:
       if(ins->a >= nregs) return err(JELLY_BC_BAD_FORMAT, "spill push reg out of range", 0);
-      if(rk(m, reg_types, ins->a) != JELLY_T_DYNAMIC) return err(JELLY_BC_BAD_FORMAT, "spill_push requires Dynamic", 0);
       return ok();
     case JOP_SPILL_POP:
       if(ins->a >= nregs) return err(JELLY_BC_BAD_FORMAT, "spill pop reg out of range", 0);
-      if(rk(m, reg_types, ins->a) != JELLY_T_DYNAMIC) return err(JELLY_BC_BAD_FORMAT, "spill_pop requires Dynamic", 0);
       return ok();
     case JOP_NEG_I32:
       if(ins->a >= nregs || ins->b >= nregs) return err(JELLY_BC_BAD_FORMAT, "neg reg out of range", 0);
-      if(rk(m, reg_types, ins->a) != JELLY_T_I32 || rk(m, reg_types, ins->b) != JELLY_T_I32) return err(JELLY_BC_BAD_FORMAT, "neg_i32 types required", 0);
+      if((rk(m, reg_types, ins->a) != JELLY_T_I8 && rk(m, reg_types, ins->a) != JELLY_T_I16 && rk(m, reg_types, ins->a) != JELLY_T_I32) ||
+         (rk(m, reg_types, ins->b) != JELLY_T_I8 && rk(m, reg_types, ins->b) != JELLY_T_I16 && rk(m, reg_types, ins->b) != JELLY_T_I32))
+        return err(JELLY_BC_BAD_FORMAT, "neg_i32 types must be i8/i16/i32", 0);
       return ok();
     case JOP_NEG_I64:
       if(ins->a >= nregs || ins->b >= nregs) return err(JELLY_BC_BAD_FORMAT, "neg reg out of range", 0);
@@ -325,7 +494,9 @@ jelly_bc_result jelly_bc_validate_insn(const jelly_bc_module* m,
     case JOP_LT_I32:
       if(ins->a >= nregs || ins->b >= nregs || ins->c >= nregs) return err(JELLY_BC_BAD_FORMAT, "lt_i32 reg out of range", 0);
       if(rk(m, reg_types, ins->a) != JELLY_T_BOOL) return err(JELLY_BC_BAD_FORMAT, "lt_i32 dst must be bool", 0);
-      if(rk(m, reg_types, ins->b) != JELLY_T_I32 || rk(m, reg_types, ins->c) != JELLY_T_I32) return err(JELLY_BC_BAD_FORMAT, "lt_i32 types required", 0);
+      if((rk(m, reg_types, ins->b) != JELLY_T_I8 && rk(m, reg_types, ins->b) != JELLY_T_I16 && rk(m, reg_types, ins->b) != JELLY_T_I32) ||
+         (rk(m, reg_types, ins->c) != JELLY_T_I8 && rk(m, reg_types, ins->c) != JELLY_T_I16 && rk(m, reg_types, ins->c) != JELLY_T_I32))
+        return err(JELLY_BC_BAD_FORMAT, "lt_i32 operands must be i8/i16/i32", 0);
       return ok();
     case JOP_KINDOF:
       if(ins->a >= nregs || ins->b >= nregs) return err(JELLY_BC_BAD_FORMAT, "kindof reg out of range", 0);

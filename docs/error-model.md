@@ -1,4 +1,4 @@
-## Jelly VM error model (MVP)
+## Jelly VM error model
 
 Jelly’s interpreter distinguishes between:
 
@@ -62,6 +62,6 @@ If an exception is not caught, execution returns `JELLY_EXEC_TRAP` and the VM re
 Traps are returned from the interpreter loop and cleanup:
 
 - unwinds all active call frames (freeing frame memory)
-- leaves the GC heap owned by the VM, to be reclaimed via `jelly_vm_shutdown()` / GC sweep rules
+- leaves the GC heap owned by the VM, to be reclaimed via `jelly_vm_destroy()` / GC sweep rules
 
 Temporary GC roots must still be balanced within instructions that allocate; the current MVP uses explicit push/pop rooting around multi-allocation sequences.

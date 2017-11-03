@@ -1,2 +1,0 @@
-(build_program_module::VInsn, Vec<u32>, Vec<u32>, &mut Vec<build_program_module::VInsn>, &mut Vec<InstrInfo>)
-&mut dyn for<'a, 'b> FnMut(build_program_module::VInsn, Vec<u32>, Vec<u32>, &'a mut Vec<build_program_module::VInsn>, &'b mut Vec<InstrInfo>)

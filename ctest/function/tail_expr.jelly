@@ -1,4 +1,0 @@
-let f : I32 -> I32 = fn(x) { let y = x + 1; y };
-let r : I32 = f(1);
-if (r == 2) { "ok" } else { "bad" }
-

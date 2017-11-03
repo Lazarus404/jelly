@@ -1,6 +1,0 @@
-let a = "abc";
-let b = "abc";
-let c = "abd";
-let ok = Bytes.eq(a, b) && !Bytes.eq(a, c);
-if (ok) { "ok" } else { "bad" }
-

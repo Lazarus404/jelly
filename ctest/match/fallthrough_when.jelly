@@ -1,8 +1,0 @@
-let x = 2;
-match (x) {
-  1 => { let y = 0; },
-  2 when (false) => { "bad" },
-  2 when (true) => { "ok" },
-  _ => { "bad" },
-}
-

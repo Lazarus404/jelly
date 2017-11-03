@@ -1,8 +1,0 @@
-let s = `a${{ let x = "b"; x }}c`;
-let ok =
-  (Bytes.len(s) == 3) &&
-  (Bytes.get_u8(s, 0) == 97) &&
-  (Bytes.get_u8(s, 1) == 98) &&
-  (Bytes.get_u8(s, 2) == 99);
-if (ok) { "ok" } else { "bad" }
-

@@ -1,8 +1,0 @@
-let b = "abcd";
-let x = Bytes.slice(b, 1, 2);
-if (Bytes.len(x) == 2 && Bytes.get_u8(x, 0) == 98 && Bytes.get_u8(x, 1) == 99) {
-  "ok"
-} else {
-  "bad"
-}
-

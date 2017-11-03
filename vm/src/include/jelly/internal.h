@@ -15,7 +15,7 @@
  * be used to endorse or promote products derived from this software without specific
  * prior written permission.
  *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS “AS IS” AND
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
  * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
  * IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
@@ -27,37 +27,16 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <jelly/internal.h>
+/**
+ * Internal VM header — NOT for embedders.
+ * Consolidates all headers needed by VM implementation.
+ * Use #include <jelly/internal.h> in VM source files only.
+ */
+#ifndef JELLY_INTERNAL_H
+#define JELLY_INTERNAL_H
 
-jelly_box_i64* jelly_box_i64_new(struct jelly_vm* vm, uint32_t type_id, int64_t v) {
-  jelly_box_i64* b = (jelly_box_i64*)jelly_gc_alloc(vm, sizeof(jelly_box_i64));
-  b->h.kind = (uint32_t)JELLY_OBJ_BOX_I64;
-  b->h.type_id = type_id;
-  b->value = v;
-  return b;
-}
+#include <jelly.h>
+#include <jelly/check.h>
+#include <jelly/internal/vm_internal.h>
 
-jelly_box_f64* jelly_box_f64_new(struct jelly_vm* vm, uint32_t type_id, double v) {
-  jelly_box_f64* b = (jelly_box_f64*)jelly_gc_alloc(vm, sizeof(jelly_box_f64));
-  b->h.kind = (uint32_t)JELLY_OBJ_BOX_F64;
-  b->h.type_id = type_id;
-  b->value = v;
-  return b;
-}
-
-jelly_box_f32* jelly_box_f32_new(struct jelly_vm* vm, uint32_t type_id, float v) {
-  jelly_box_f32* b = (jelly_box_f32*)jelly_gc_alloc(vm, sizeof(jelly_box_f32));
-  b->h.kind = (uint32_t)JELLY_OBJ_BOX_F32;
-  b->h.type_id = type_id;
-  b->value = v;
-  return b;
-}
-
-jelly_box_f16* jelly_box_f16_new(struct jelly_vm* vm, uint32_t type_id, uint16_t bits) {
-  jelly_box_f16* b = (jelly_box_f16*)jelly_gc_alloc(vm, sizeof(jelly_box_f16));
-  b->h.kind = (uint32_t)JELLY_OBJ_BOX_F16;
-  b->h.type_id = type_id;
-  b->value = bits;
-  return b;
-}
-
+#endif /* JELLY_INTERNAL_H */

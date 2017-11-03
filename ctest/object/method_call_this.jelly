@@ -1,8 +1,0 @@
-let add: (Object, I32) -> I32 = fn(self, y) {
-  let x: I32 = self.x;
-  return x + y;
-};
-let o = { x: 4, add: add };
-let r: I32 = o.add(3);
-if (r == 7) { "ok" } else { "bad" }
-

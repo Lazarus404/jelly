@@ -1,4 +1,0 @@
-let o = { a: 0 };
-o.a = 7;
-if (o.a == 7) { "ok" } else { "bad" }
-

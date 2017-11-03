@@ -1,0 +1,5 @@
+/research/
+/build*/
+jellyc/target/
+vm/build/
+vm/cmake/

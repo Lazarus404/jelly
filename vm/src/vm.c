@@ -1,38 +1,67 @@
-#include <jelly.h>
+/**
+ * Copyright 2017 - Jahred Love
+ *
+ * Redistribution and use in source and binary forms, with or without modification,
+ * are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice, this
+ * list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice, this
+ * list of conditions and the following disclaimer in the documentation and/or other
+ * materials provided with the distribution.
+ *
+ * 3. Neither the name of the copyright holder nor the names of its contributors may
+ * be used to endorse or promote products derived from this software without specific
+ * prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS “AS IS” AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+ * IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+ * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+ * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ */
 
-#include <jelly/vm.h>
-#include <jelly/gc.h>
+#include <jelly.h>
+#include <jelly/internal.h>
 
 #include <string.h>
 #include <stdlib.h>
-
-// Placeholder translation unit for the focused VM.
-// As the VM grows, core state/opcodes/dispatch will live under `src/`.
 
 int jellyvm_dummy_symbol_to_keep_archive(void);
 int jellyvm_dummy_symbol_to_keep_archive(void) {
 	return (int)JELLY_VERSION;
 }
 
-void jelly_vm_init(jelly_vm* vm) {
-  if(!vm) return;
-  memset(vm, 0, sizeof(*vm));
-  // Leave gc_next_collect=0 here to allow embedders to configure it before first exec.
+jelly_vm* jelly_vm_create(void) {
+  jelly_vm* vm = (jelly_vm*)calloc(1, sizeof(jelly_vm));
+  if (!vm) return NULL;
+  vm->call_frames_max = 100000u;
+  return vm;
 }
 
-void jelly_vm_shutdown(jelly_vm* vm) {
-  if(!vm) return;
+void jelly_vm_destroy(jelly_vm* vm) {
+  if (!vm) return;
   jelly_gc_shutdown(vm);
+  vm_frame_cache_shutdown(vm);
   free(vm->spill);
   vm->spill = NULL;
   vm->spill_len = 0;
   vm->spill_cap = 0;
 
-  // `exec_entry` frees call frames on normal completion, but shut down defensively.
   free(vm->call_frames);
   vm->call_frames = NULL;
   vm->call_frames_len = 0;
   vm->call_frames_cap = 0;
+
+  free(vm->const_fun_cache);
+  vm->const_fun_cache = NULL;
+  vm->const_fun_cache_len = 0;
 
   free(vm->exc_handlers);
   vm->exc_handlers = NULL;
@@ -42,5 +71,21 @@ void jelly_vm_shutdown(jelly_vm* vm) {
   vm->exc_payload = jelly_make_null();
 
   vm->running_module = NULL;
+
+  free(vm);
+}
+
+void jelly_vm_clear_trap(jelly_vm* vm) {
+  if (!vm) return;
+  vm->trap_code = JELLY_TRAP_NONE;
+  vm->trap_msg = NULL;
+}
+
+jelly_trap_code jelly_vm_last_trap_code(const jelly_vm* vm) {
+  return vm ? vm->trap_code : JELLY_TRAP_NONE;
+}
+
+const char* jelly_vm_last_trap_msg(const jelly_vm* vm) {
+  return vm ? vm->trap_msg : NULL;
 }
 

@@ -1,4 +1,0 @@
-let n = 1;
-let r = if (true) { let x = 2; n = n + x; "ok" } else { "bad" };
-r
-

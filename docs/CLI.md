@@ -2,23 +2,6 @@
 
 `jellyvm` is a minimal command-line runner for Jelly bytecode modules.
 
-### Build
-
-From repo root:
-
-```bash
-cmake -S . -B build
-cmake --build build -j
-```
-
-The CLI binary is produced at `build/bin/jellyvm` (or `build_root/bin/jellyvm` depending on your build dir).
-
-### Run
-
-```bash
-./build/bin/jellyvm path/to/module.jlyb
-```
-
 ### Exit codes
 
 - `0`: executed successfully

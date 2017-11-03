@@ -1,14 +1,33 @@
-#include <jelly/gc.h>
+/**
+ * Copyright 2017 - Jahred Love
+ *
+ * Redistribution and use in source and binary forms, with or without modification,
+ * are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice, this
+ * list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice, this
+ * list of conditions and the following disclaimer in the documentation and/or other
+ * materials provided with the distribution.
+ *
+ * 3. Neither the name of the copyright holder nor the names of its contributors may
+ * be used to endorse or promote products derived from this software without specific
+ * prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS “AS IS” AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+ * IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+ * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+ * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ */
 
-#include <jelly/vm.h>
-
-#include <jelly/list.h>
-#include <jelly/array.h>
-#include <jelly/object.h>
-#include <jelly/function.h>
-#include <jelly/bytes.h>
-#include <jelly/abstract.h>
-#include <jelly/box.h>
+#include <jelly/internal.h>
 
 #include <stdlib.h>
 #include <string.h>
@@ -121,6 +140,7 @@ static void trace_object(mark_stack* ms, void* p) {
     case JELLY_OBJ_BOX_I64:
     case JELLY_OBJ_BOX_F64:
     case JELLY_OBJ_BOX_F32:
+    case JELLY_OBJ_BOX_F16:
       return;
     case JELLY_OBJ_LIST: {
       const jelly_list* n = (const jelly_list*)p;
@@ -197,16 +217,10 @@ static void destroy_object(void* p) {
 static void scan_typed_frames(struct jelly_vm* vm, mark_stack* ms) {
   const jelly_bc_module* m = vm->running_module;
   if(!m) return;
-  // call_frames is managed by exec.c; we only depend on the common prefix layout:
-  // struct call_frame { const jelly_bc_function* f; reg_frame rf; ... }
-  // reg_frame is { uint8_t* mem; uint32_t* off; uint32_t nregs; }
-  typedef struct reg_frame_view { uint8_t* mem; uint32_t* off; uint32_t nregs; } reg_frame_view;
-  typedef struct call_frame_view { const jelly_bc_function* f; reg_frame_view rf; } call_frame_view;
-
-  const call_frame_view* frames = (const call_frame_view*)vm->call_frames;
+  const call_frame* frames = (const call_frame*)vm->call_frames;
   for(uint32_t fi = 0; fi < vm->call_frames_len; fi++) {
     const jelly_bc_function* f = frames[fi].f;
-    const reg_frame_view* rf = &frames[fi].rf;
+    const reg_frame* rf = &frames[fi].rf;
     for(uint32_t r = 0; r < rf->nregs; r++) {
       jelly_type_kind k = m->types[f->reg_types[r]].kind;
       if(k == JELLY_T_DYNAMIC) {
@@ -245,6 +259,13 @@ void jelly_gc_collect(struct jelly_vm* vm) {
   for(uint32_t i = 0; i < vm->spill_len; i++) mark_val(&ms, vm->spill[i]);
   // Roots: temp roots
   for(uint32_t i = 0; i < vm->gc_roots_len; i++) mark_val(&ms, vm->gc_roots[i]);
+  // Roots: cached const functions (allocated on GC heap)
+  if(vm->const_fun_cache && vm->const_fun_cache_len) {
+    void** fs = (void**)vm->const_fun_cache;
+    for(uint32_t i = 0; i < vm->const_fun_cache_len; i++) {
+      mark_ptr(&ms, fs[i]);
+    }
+  }
   // Roots: typed call frames
   scan_typed_frames(vm, &ms);
 

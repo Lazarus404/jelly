@@ -20,14 +20,14 @@ This document defines the rules for boxing/unboxing so the VM stays **small**, *
 
 `jelly_value` is a `uintptr_t` using low-bit tags:
 
-- **`null`**, **`bool`**, **`i32`**, **`atom`**: immediate tagged values
+- **`null`**, **`bool`**, **`i32`** etc., **`atom`**: immediate tagged values
 - **pointers**: heap objects (tag `PTR`), identified by `jelly_obj_header.kind`
 
 Wide numerics are boxed as heap objects so tagging stays portable:
 
 - `I64` -> `JELLY_OBJ_BOX_I64`
 - `F64` -> `JELLY_OBJ_BOX_F64`
-- `F32` -> `JELLY_OBJ_BOX_F32` (current MVP choice)
+- `F32` -> `JELLY_OBJ_BOX_F32`
 
 ### Boxing behavior (`JOP_TO_DYN`)
 
@@ -53,7 +53,7 @@ Unboxing is **checked**:
   - `null` -> store `NULL`
   - pointer -> heap object kind matches destination kind
 
-Mismatch behavior is currently a VM panic (MVP); it will become a structured trap/error in the “error model” stage.
+Mismatch behavior is currently a VM panic; it will become a structured trap/error in the “error model” stage.
 
 ### GC interaction
 
@@ -63,4 +63,3 @@ Because boxing allocates (e.g. `I64/F64/F32` boxes), instructions that allocate 
 - `jelly_gc_pop_roots(vm, n)`
 
 This is required whenever a boxed value must survive across additional allocations before being stored into a traced location.
-

@@ -1,4 +1,0 @@
-let n = 3;
-while (n > 0) { n = n - 1; }
-if (n == 0) { "ok" } else { "bad" }
-

@@ -1,3 +1,0 @@
-let cond = true;
-if (!cond == false) { "ok" } else { "bad" }
-

@@ -1,6 +1,0 @@
-import {add} from math;
-import {x as y} from consts;
-
-let r: I32 = add(y, 3);
-if (r == 7) { "ok" } else { "bad" }
-

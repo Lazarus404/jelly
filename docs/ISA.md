@@ -235,22 +235,22 @@ When a trap is caught, the catch payload is a boxed `i32` equal to the `jelly_tr
   - `rA:Dynamic = box(rB)` (boxing depends on `rB`’s static type)
 
 - **`JOP_FROM_DYN_I32 a b`**:
-  - `rA:I32 = unbox_i32(rB:Dynamic)` (checked)
+  - `rA:I32 = unbox_i32(rB:Dynamic)`
 
 - **`JOP_FROM_DYN_I64 a b`**:
-  - `rA:I64 = unbox_i64(rB:Dynamic)` (checked)
+  - `rA:I64 = unbox_i64(rB:Dynamic)`
 
 - **`JOP_FROM_DYN_F64 a b`**:
-  - `rA:F64 = unbox_f64(rB:Dynamic)` (checked)
+  - `rA:F64 = unbox_f64(rB:Dynamic)`
 
 - **`JOP_FROM_DYN_BOOL a b`**:
-  - `rA:Bool = unbox_bool(rB:Dynamic)` (checked)
+  - `rA:Bool = unbox_bool(rB:Dynamic)`
 
 - **`JOP_FROM_DYN_ATOM a b`**:
-  - `rA:Atom = unbox_atom(rB:Dynamic)` (checked)
+  - `rA:Atom = unbox_atom(rB:Dynamic)`
 
 - **`JOP_FROM_DYN_PTR a b`**:
-  - `rA:<pointer-kind> = unbox_ptrkind(rB:Dynamic)` (checked)
+  - `rA:<pointer-kind> = unbox_ptrkind(rB:Dynamic)`
   - permitted destination kinds: `Bytes/Function/List/Array/Object/Abstract`
   - if `rB` is `null`, store `NULL` pointer into `rA`
   - otherwise require the heap object kind matches the destination register kind
@@ -280,17 +280,21 @@ When a trap is caught, the catch payload is a boxed `i32` equal to the `jelly_tr
   - kind codes (stable for compiler lowering):
     - `0` = null
     - `1` = bool
-    - `2` = i32
-    - `3` = atom
-    - `4` = bytes
-    - `5` = function
-    - `6` = list
-    - `7` = array
-    - `8` = object
-    - `9` = abstract
-    - `10` = box_i64
-    - `11` = box_f64
-    - `12` = box_f32
+    - `2` = atom
+    - `3` = i8
+    - `4` = i16
+    - `5` = i32
+    - `6` = i64
+    - `7` = f16
+    - `8` = f32
+    - `9` = f64
+    - `10` = bytes
+    - `11` = list
+    - `12` = array
+    - `13` = object
+    - `14` = function
+    - `15` = abstract
+    - `16` = dynamic
     - `0x7fffffff` = unknown pointer-kind (reserved)
 
 - **`JOP_SWITCH_KIND a b imm`**:

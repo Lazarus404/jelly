@@ -1,9 +1,0 @@
-let init: (Object) -> Object = fn(self) { self.x = "ok"; self };
-let P = { init: init };
-let o = new P();
-let ok =
-  (Bytes.len(o.x) == 2) &&
-  (Bytes.get_u8(o.x, 0) == 111) &&
-  (Bytes.get_u8(o.x, 1) == 107);
-if (ok) { "ok" } else { "bad" }
-

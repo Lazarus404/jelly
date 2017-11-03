@@ -1,4 +1,0 @@
-let a = true;
-let b = false;
-if (a && (!b || b == false)) { "ok" } else { "bad" }
-

@@ -1,7 +1,0 @@
-let sum: (I32, I32) -> I32 = fn(n, acc) {
-  return if (n == 0) { acc } else { sum(n - 1, acc + n) };
-};
-
-let r: I32 = sum(10000, 0);
-if (r == 50005000) { "ok" } else { "bad" }
-

@@ -1,7 +1,0 @@
-let x = 4;
-let f: I32 -> I32 = fn(y) {
-  return x + y;
-};
-let r: I32 = f(3);
-if (r == 7) { "ok" } else { "bad" }
-

@@ -1,8 +1,0 @@
-let a = false;
-let c1 = if (a && (Bytes.get_u8("a", 1) == 0)) { false } else { true };
-
-let b = true;
-let c2 = if (b || (Bytes.get_u8("a", 1) == 0)) { true } else { false };
-
-if (c1 && c2) { "ok" } else { "bad" }
-

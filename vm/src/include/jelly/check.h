@@ -27,37 +27,27 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <jelly/internal.h>
+#ifndef JELLY_BYTECODE_CHECK_H
+#define JELLY_BYTECODE_CHECK_H
 
-jelly_box_i64* jelly_box_i64_new(struct jelly_vm* vm, uint32_t type_id, int64_t v) {
-  jelly_box_i64* b = (jelly_box_i64*)jelly_gc_alloc(vm, sizeof(jelly_box_i64));
-  b->h.kind = (uint32_t)JELLY_OBJ_BOX_I64;
-  b->h.type_id = type_id;
-  b->value = v;
-  return b;
-}
+#include <jelly.h>
 
-jelly_box_f64* jelly_box_f64_new(struct jelly_vm* vm, uint32_t type_id, double v) {
-  jelly_box_f64* b = (jelly_box_f64*)jelly_gc_alloc(vm, sizeof(jelly_box_f64));
-  b->h.kind = (uint32_t)JELLY_OBJ_BOX_F64;
-  b->h.type_id = type_id;
-  b->value = v;
-  return b;
-}
+// Instruction validation that depends on opcode semantics.
+jelly_bc_result jelly_bc_validate_insn(const jelly_bc_module* m,
+                                      const jelly_type_id* reg_types,
+                                      const jelly_insn* ins,
+                                      uint32_t nregs,
+                                      uint32_t pc,
+                                      uint32_t ninsns,
+                                      uint32_t nfuncs);
 
-jelly_box_f32* jelly_box_f32_new(struct jelly_vm* vm, uint32_t type_id, float v) {
-  jelly_box_f32* b = (jelly_box_f32*)jelly_gc_alloc(vm, sizeof(jelly_box_f32));
-  b->h.kind = (uint32_t)JELLY_OBJ_BOX_F32;
-  b->h.type_id = type_id;
-  b->value = v;
-  return b;
-}
+// Post-parse validation that needs visibility of the full instruction stream
+// (e.g. jump tables / multi-insn encoding constraints).
+jelly_bc_result jelly_bc_validate_function_semantics(const jelly_bc_module* m,
+                                                    const jelly_type_id* reg_types,
+                                                    const jelly_insn* insns,
+                                                    uint32_t nregs,
+                                                    uint32_t ninsns);
 
-jelly_box_f16* jelly_box_f16_new(struct jelly_vm* vm, uint32_t type_id, uint16_t bits) {
-  jelly_box_f16* b = (jelly_box_f16*)jelly_gc_alloc(vm, sizeof(jelly_box_f16));
-  b->h.kind = (uint32_t)JELLY_OBJ_BOX_F16;
-  b->h.type_id = type_id;
-  b->value = bits;
-  return b;
-}
+#endif /* JELLY_BYTECODE_CHECK_H */
 

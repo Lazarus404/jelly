@@ -1,4 +1,0 @@
-let inc : I32 -> I32 = fn(x) { let y = x; y = y + 1; return y; };
-let r = inc(41);
-if (r == 42) { "ok" } else { "bad" }
-
