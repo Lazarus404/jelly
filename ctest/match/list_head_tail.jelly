@@ -1,0 +1,8 @@
+let xs = List.cons<I32>(1, List.cons<I32>(2, List.nil<I32>()));
+match (xs) {
+  [h | t] when (h == 1) => {
+    if (List.head(t) == 2) { "ok" } else { "bad" }
+  },
+  _ => { "bad" },
+}
+

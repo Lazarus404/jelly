@@ -1,0 +1,7 @@
+let fib: I32 -> I32 = fn(n) {
+  return if (n < 2) { n } else { fib(n - 1) + fib(n - 2) };
+};
+
+let r: I32 = fib(10);
+if (r == 55) { "ok" } else { "bad" }
+

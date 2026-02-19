@@ -1,0 +1,62 @@
+[
+{
+  "directory": "/Users/jahredlove/Documents/projects/jelly/vm/build",
+  "command": "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/cc -DJELLYVM_VERSION_MAJOR=0 -DJELLYVM_VERSION_MINOR=1 -DJELLYVM_VERSION_PATCH=0 -I/Users/jahredlove/Documents/projects/jelly/vm/include -std=c11 -arch arm64 -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.5.sdk -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wno-unused-parameter -o CMakeFiles/jellyvm.dir/src/vm.c.o -c /Users/jahredlove/Documents/projects/jelly/vm/src/vm.c",
+  "file": "/Users/jahredlove/Documents/projects/jelly/vm/src/vm.c",
+  "output": "CMakeFiles/jellyvm.dir/src/vm.c.o"
+},
+{
+  "directory": "/Users/jahredlove/Documents/projects/jelly/vm/build",
+  "command": "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/cc -DJELLYVM_VERSION_MAJOR=0 -DJELLYVM_VERSION_MINOR=1 -DJELLYVM_VERSION_PATCH=0 -I/Users/jahredlove/Documents/projects/jelly/vm/include -std=c11 -arch arm64 -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.5.sdk -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wno-unused-parameter -o CMakeFiles/jellyvm.dir/src/bytecode/loader.c.o -c /Users/jahredlove/Documents/projects/jelly/vm/src/bytecode/loader.c",
+  "file": "/Users/jahredlove/Documents/projects/jelly/vm/src/bytecode/loader.c",
+  "output": "CMakeFiles/jellyvm.dir/src/bytecode/loader.c.o"
+},
+{
+  "directory": "/Users/jahredlove/Documents/projects/jelly/vm/build",
+  "command": "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/cc -DJELLYVM_VERSION_MAJOR=0 -DJELLYVM_VERSION_MINOR=1 -DJELLYVM_VERSION_PATCH=0 -I/Users/jahredlove/Documents/projects/jelly/vm/include -std=c11 -arch arm64 -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.5.sdk -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wno-unused-parameter -o CMakeFiles/jellyvm.dir/src/vm/exec.c.o -c /Users/jahredlove/Documents/projects/jelly/vm/src/vm/exec.c",
+  "file": "/Users/jahredlove/Documents/projects/jelly/vm/src/vm/exec.c",
+  "output": "CMakeFiles/jellyvm.dir/src/vm/exec.c.o"
+},
+{
+  "directory": "/Users/jahredlove/Documents/projects/jelly/vm/build",
+  "command": "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/cc -DJELLYVM_VERSION_MAJOR=0 -DJELLYVM_VERSION_MINOR=1 -DJELLYVM_VERSION_PATCH=0 -I/Users/jahredlove/Documents/projects/jelly/vm/include -std=c11 -arch arm64 -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.5.sdk -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wno-unused-parameter -o CMakeFiles/jellyvm.dir/src/types/array.c.o -c /Users/jahredlove/Documents/projects/jelly/vm/src/types/array.c",
+  "file": "/Users/jahredlove/Documents/projects/jelly/vm/src/types/array.c",
+  "output": "CMakeFiles/jellyvm.dir/src/types/array.c.o"
+},
+{
+  "directory": "/Users/jahredlove/Documents/projects/jelly/vm/build",
+  "command": "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/cc -DJELLYVM_VERSION_MAJOR=0 -DJELLYVM_VERSION_MINOR=1 -DJELLYVM_VERSION_PATCH=0 -I/Users/jahredlove/Documents/projects/jelly/vm/include -std=c11 -arch arm64 -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.5.sdk -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wno-unused-parameter -o CMakeFiles/jellyvm.dir/src/types/list.c.o -c /Users/jahredlove/Documents/projects/jelly/vm/src/types/list.c",
+  "file": "/Users/jahredlove/Documents/projects/jelly/vm/src/types/list.c",
+  "output": "CMakeFiles/jellyvm.dir/src/types/list.c.o"
+},
+{
+  "directory": "/Users/jahredlove/Documents/projects/jelly/vm/build",
+  "command": "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/cc -DJELLYVM_VERSION_MAJOR=0 -DJELLYVM_VERSION_MINOR=1 -DJELLYVM_VERSION_PATCH=0 -I/Users/jahredlove/Documents/projects/jelly/vm/include -std=c11 -arch arm64 -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.5.sdk -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wno-unused-parameter -o CMakeFiles/jellyvm.dir/src/types/strutil.c.o -c /Users/jahredlove/Documents/projects/jelly/vm/src/types/strutil.c",
+  "file": "/Users/jahredlove/Documents/projects/jelly/vm/src/types/strutil.c",
+  "output": "CMakeFiles/jellyvm.dir/src/types/strutil.c.o"
+},
+{
+  "directory": "/Users/jahredlove/Documents/projects/jelly/vm/build",
+  "command": "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/cc -DJELLYVM_VERSION_MAJOR=0 -DJELLYVM_VERSION_MINOR=1 -DJELLYVM_VERSION_PATCH=0 -I/Users/jahredlove/Documents/projects/jelly/vm/include -std=c11 -arch arm64 -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.5.sdk -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wno-unused-parameter -o CMakeFiles/jellyvm_cli.dir/src/main.c.o -c /Users/jahredlove/Documents/projects/jelly/vm/src/main.c",
+  "file": "/Users/jahredlove/Documents/projects/jelly/vm/src/main.c",
+  "output": "CMakeFiles/jellyvm_cli.dir/src/main.c.o"
+},
+{
+  "directory": "/Users/jahredlove/Documents/projects/jelly/vm/build/ctest",
+  "command": "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/cc -DJELLYVM_VERSION_MAJOR=0 -DJELLYVM_VERSION_MINOR=1 -DJELLYVM_VERSION_PATCH=0 -I/Users/jahredlove/Documents/projects/jelly/vm/include -std=c11 -arch arm64 -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.5.sdk -o CMakeFiles/strutil_tests.dir/strutil_tests.c.o -c /Users/jahredlove/Documents/projects/jelly/ctest/strutil_tests.c",
+  "file": "/Users/jahredlove/Documents/projects/jelly/ctest/strutil_tests.c",
+  "output": "ctest/CMakeFiles/strutil_tests.dir/strutil_tests.c.o"
+},
+{
+  "directory": "/Users/jahredlove/Documents/projects/jelly/vm/build/ctest",
+  "command": "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/cc -DJELLYVM_VERSION_MAJOR=0 -DJELLYVM_VERSION_MINOR=1 -DJELLYVM_VERSION_PATCH=0 -I/Users/jahredlove/Documents/projects/jelly/vm/include -std=c11 -arch arm64 -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.5.sdk -o CMakeFiles/bytecode_loader_tests.dir/bytecode_loader_tests.c.o -c /Users/jahredlove/Documents/projects/jelly/ctest/bytecode_loader_tests.c",
+  "file": "/Users/jahredlove/Documents/projects/jelly/ctest/bytecode_loader_tests.c",
+  "output": "ctest/CMakeFiles/bytecode_loader_tests.dir/bytecode_loader_tests.c.o"
+},
+{
+  "directory": "/Users/jahredlove/Documents/projects/jelly/vm/build/ctest",
+  "command": "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/cc -DJELLYVM_VERSION_MAJOR=0 -DJELLYVM_VERSION_MINOR=1 -DJELLYVM_VERSION_PATCH=0 -I/Users/jahredlove/Documents/projects/jelly/vm/include -std=c11 -arch arm64 -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.5.sdk -o CMakeFiles/vm_exec_tests.dir/vm_exec_tests.c.o -c /Users/jahredlove/Documents/projects/jelly/ctest/vm_exec_tests.c",
+  "file": "/Users/jahredlove/Documents/projects/jelly/ctest/vm_exec_tests.c",
+  "output": "ctest/CMakeFiles/vm_exec_tests.dir/vm_exec_tests.c.o"
+}
+]

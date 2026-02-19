@@ -1,0 +1,410 @@
+Start testing: Feb 17 20:48 GMT
+----------------------------------------------------------
+1/27 Testing: strutil_utod_empty
+1/27 Test: strutil_utod_empty
+Command: "/Users/jahredlove/Documents/projects/jelly/vm/build/bin/strutil_tests" "utod_empty"
+Directory: /Users/jahredlove/Documents/projects/jelly/vm/build/ctest
+"strutil_utod_empty" start time: Feb 17 20:48 GMT
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.31 sec
+----------------------------------------------------------
+Test Passed.
+"strutil_utod_empty" end time: Feb 17 20:48 GMT
+"strutil_utod_empty" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2/27 Testing: strutil_utod_suffix
+2/27 Test: strutil_utod_suffix
+Command: "/Users/jahredlove/Documents/projects/jelly/vm/build/bin/strutil_tests" "utod_suffix"
+Directory: /Users/jahredlove/Documents/projects/jelly/vm/build/ctest
+"strutil_utod_suffix" start time: Feb 17 20:48 GMT
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"strutil_utod_suffix" end time: Feb 17 20:48 GMT
+"strutil_utod_suffix" time elapsed: 00:00:00
+----------------------------------------------------------
+
+3/27 Testing: strutil_utod_cap30
+3/27 Test: strutil_utod_cap30
+Command: "/Users/jahredlove/Documents/projects/jelly/vm/build/bin/strutil_tests" "utod_cap30"
+Directory: /Users/jahredlove/Documents/projects/jelly/vm/build/ctest
+"strutil_utod_cap30" start time: Feb 17 20:48 GMT
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"strutil_utod_cap30" end time: Feb 17 20:48 GMT
+"strutil_utod_cap30" time elapsed: 00:00:00
+----------------------------------------------------------
+
+4/27 Testing: strutil_utoi_empty
+4/27 Test: strutil_utoi_empty
+Command: "/Users/jahredlove/Documents/projects/jelly/vm/build/bin/strutil_tests" "utoi_empty"
+Directory: /Users/jahredlove/Documents/projects/jelly/vm/build/ctest
+"strutil_utoi_empty" start time: Feb 17 20:48 GMT
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"strutil_utoi_empty" end time: Feb 17 20:48 GMT
+"strutil_utoi_empty" time elapsed: 00:00:00
+----------------------------------------------------------
+
+5/27 Testing: strutil_utoi_sign
+5/27 Test: strutil_utoi_sign
+Command: "/Users/jahredlove/Documents/projects/jelly/vm/build/bin/strutil_tests" "utoi_sign"
+Directory: /Users/jahredlove/Documents/projects/jelly/vm/build/ctest
+"strutil_utoi_sign" start time: Feb 17 20:48 GMT
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"strutil_utoi_sign" end time: Feb 17 20:48 GMT
+"strutil_utoi_sign" time elapsed: 00:00:00
+----------------------------------------------------------
+
+6/27 Testing: strutil_utoi_cap16
+6/27 Test: strutil_utoi_cap16
+Command: "/Users/jahredlove/Documents/projects/jelly/vm/build/bin/strutil_tests" "utoi_cap16"
+Directory: /Users/jahredlove/Documents/projects/jelly/vm/build/ctest
+"strutil_utoi_cap16" start time: Feb 17 20:48 GMT
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"strutil_utoi_cap16" end time: Feb 17 20:48 GMT
+"strutil_utoi_cap16" time elapsed: 00:00:00
+----------------------------------------------------------
+
+7/27 Testing: strutil_ustrlen_basic
+7/27 Test: strutil_ustrlen_basic
+Command: "/Users/jahredlove/Documents/projects/jelly/vm/build/bin/strutil_tests" "ustrlen_basic"
+Directory: /Users/jahredlove/Documents/projects/jelly/vm/build/ctest
+"strutil_ustrlen_basic" start time: Feb 17 20:48 GMT
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"strutil_ustrlen_basic" end time: Feb 17 20:48 GMT
+"strutil_ustrlen_basic" time elapsed: 00:00:00
+----------------------------------------------------------
+
+8/27 Testing: strutil_ustrdup_basic
+8/27 Test: strutil_ustrdup_basic
+Command: "/Users/jahredlove/Documents/projects/jelly/vm/build/bin/strutil_tests" "ustrdup_basic"
+Directory: /Users/jahredlove/Documents/projects/jelly/vm/build/ctest
+"strutil_ustrdup_basic" start time: Feb 17 20:48 GMT
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"strutil_ustrdup_basic" end time: Feb 17 20:48 GMT
+"strutil_ustrdup_basic" time elapsed: 00:00:00
+----------------------------------------------------------
+
+9/27 Testing: strutil_ucmp_basic
+9/27 Test: strutil_ucmp_basic
+Command: "/Users/jahredlove/Documents/projects/jelly/vm/build/bin/strutil_tests" "ucmp_basic"
+Directory: /Users/jahredlove/Documents/projects/jelly/vm/build/ctest
+"strutil_ucmp_basic" start time: Feb 17 20:48 GMT
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"strutil_ucmp_basic" end time: Feb 17 20:48 GMT
+"strutil_ucmp_basic" time elapsed: 00:00:00
+----------------------------------------------------------
+
+10/27 Testing: strutil_utostr_ascii
+10/27 Test: strutil_utostr_ascii
+Command: "/Users/jahredlove/Documents/projects/jelly/vm/build/bin/strutil_tests" "utostr_ascii"
+Directory: /Users/jahredlove/Documents/projects/jelly/vm/build/ctest
+"strutil_utostr_ascii" start time: Feb 17 20:48 GMT
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"strutil_utostr_ascii" end time: Feb 17 20:48 GMT
+"strutil_utostr_ascii" time elapsed: 00:00:00
+----------------------------------------------------------
+
+11/27 Testing: strutil_utostr_two_byte
+11/27 Test: strutil_utostr_two_byte
+Command: "/Users/jahredlove/Documents/projects/jelly/vm/build/bin/strutil_tests" "utostr_two_byte"
+Directory: /Users/jahredlove/Documents/projects/jelly/vm/build/ctest
+"strutil_utostr_two_byte" start time: Feb 17 20:48 GMT
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"strutil_utostr_two_byte" end time: Feb 17 20:48 GMT
+"strutil_utostr_two_byte" time elapsed: 00:00:00
+----------------------------------------------------------
+
+12/27 Testing: strutil_utostr_surrogate_pair
+12/27 Test: strutil_utostr_surrogate_pair
+Command: "/Users/jahredlove/Documents/projects/jelly/vm/build/bin/strutil_tests" "utostr_surrogate_pair"
+Directory: /Users/jahredlove/Documents/projects/jelly/vm/build/ctest
+"strutil_utostr_surrogate_pair" start time: Feb 17 20:48 GMT
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"strutil_utostr_surrogate_pair" end time: Feb 17 20:48 GMT
+"strutil_utostr_surrogate_pair" time elapsed: 00:00:00
+----------------------------------------------------------
+
+13/27 Testing: strutil_utostr_out_size_zero
+13/27 Test: strutil_utostr_out_size_zero
+Command: "/Users/jahredlove/Documents/projects/jelly/vm/build/bin/strutil_tests" "utostr_out_size_zero"
+Directory: /Users/jahredlove/Documents/projects/jelly/vm/build/ctest
+"strutil_utostr_out_size_zero" start time: Feb 17 20:48 GMT
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"strutil_utostr_out_size_zero" end time: Feb 17 20:48 GMT
+"strutil_utostr_out_size_zero" time elapsed: 00:00:00
+----------------------------------------------------------
+
+14/27 Testing: strutil_utostr_truncates
+14/27 Test: strutil_utostr_truncates
+Command: "/Users/jahredlove/Documents/projects/jelly/vm/build/bin/strutil_tests" "utostr_truncates"
+Directory: /Users/jahredlove/Documents/projects/jelly/vm/build/ctest
+"strutil_utostr_truncates" start time: Feb 17 20:48 GMT
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"strutil_utostr_truncates" end time: Feb 17 20:48 GMT
+"strutil_utostr_truncates" time elapsed: 00:00:00
+----------------------------------------------------------
+
+15/27 Testing: strutil_uvszprintf_basic
+15/27 Test: strutil_uvszprintf_basic
+Command: "/Users/jahredlove/Documents/projects/jelly/vm/build/bin/strutil_tests" "uvszprintf_basic"
+Directory: /Users/jahredlove/Documents/projects/jelly/vm/build/ctest
+"strutil_uvszprintf_basic" start time: Feb 17 20:48 GMT
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"strutil_uvszprintf_basic" end time: Feb 17 20:48 GMT
+"strutil_uvszprintf_basic" time elapsed: 00:00:00
+----------------------------------------------------------
+
+16/27 Testing: strutil_uvszprintf_percent_s
+16/27 Test: strutil_uvszprintf_percent_s
+Command: "/Users/jahredlove/Documents/projects/jelly/vm/build/bin/strutil_tests" "uvszprintf_percent_s"
+Directory: /Users/jahredlove/Documents/projects/jelly/vm/build/ctest
+"strutil_uvszprintf_percent_s" start time: Feb 17 20:48 GMT
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"strutil_uvszprintf_percent_s" end time: Feb 17 20:48 GMT
+"strutil_uvszprintf_percent_s" time elapsed: 00:00:00
+----------------------------------------------------------
+
+17/27 Testing: strutil_uvszprintf_unsupported_precision
+17/27 Test: strutil_uvszprintf_unsupported_precision
+Command: "/Users/jahredlove/Documents/projects/jelly/vm/build/bin/strutil_tests" "uvszprintf_unsupported_precision"
+Directory: /Users/jahredlove/Documents/projects/jelly/vm/build/ctest
+"strutil_uvszprintf_unsupported_precision" start time: Feb 17 20:48 GMT
+Output:
+----------------------------------------------------------
+jelly_fatal: Unsupported printf format
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"strutil_uvszprintf_unsupported_precision" end time: Feb 17 20:48 GMT
+"strutil_uvszprintf_unsupported_precision" time elapsed: 00:00:00
+----------------------------------------------------------
+
+18/27 Testing: strutil_uvszprintf_unsupported_spec
+18/27 Test: strutil_uvszprintf_unsupported_spec
+Command: "/Users/jahredlove/Documents/projects/jelly/vm/build/bin/strutil_tests" "uvszprintf_unsupported_spec"
+Directory: /Users/jahredlove/Documents/projects/jelly/vm/build/ctest
+"strutil_uvszprintf_unsupported_spec" start time: Feb 17 20:48 GMT
+Output:
+----------------------------------------------------------
+jelly_fatal: Unsupported printf format
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"strutil_uvszprintf_unsupported_spec" end time: Feb 17 20:48 GMT
+"strutil_uvszprintf_unsupported_spec" time elapsed: 00:00:00
+----------------------------------------------------------
+
+19/27 Testing: bc_loader_minimal_ok
+19/27 Test: bc_loader_minimal_ok
+Command: "/Users/jahredlove/Documents/projects/jelly/vm/build/bin/bytecode_loader_tests" "loader_minimal_ok"
+Directory: /Users/jahredlove/Documents/projects/jelly/vm/build/ctest
+"bc_loader_minimal_ok" start time: Feb 17 20:48 GMT
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.17 sec
+----------------------------------------------------------
+Test Passed.
+"bc_loader_minimal_ok" end time: Feb 17 20:48 GMT
+"bc_loader_minimal_ok" time elapsed: 00:00:00
+----------------------------------------------------------
+
+20/27 Testing: bc_loader_bad_magic
+20/27 Test: bc_loader_bad_magic
+Command: "/Users/jahredlove/Documents/projects/jelly/vm/build/bin/bytecode_loader_tests" "loader_bad_magic"
+Directory: /Users/jahredlove/Documents/projects/jelly/vm/build/ctest
+"bc_loader_bad_magic" start time: Feb 17 20:48 GMT
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"bc_loader_bad_magic" end time: Feb 17 20:48 GMT
+"bc_loader_bad_magic" time elapsed: 00:00:00
+----------------------------------------------------------
+
+21/27 Testing: bc_loader_nregs_too_big
+21/27 Test: bc_loader_nregs_too_big
+Command: "/Users/jahredlove/Documents/projects/jelly/vm/build/bin/bytecode_loader_tests" "loader_nregs_too_big"
+Directory: /Users/jahredlove/Documents/projects/jelly/vm/build/ctest
+"bc_loader_nregs_too_big" start time: Feb 17 20:48 GMT
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"bc_loader_nregs_too_big" end time: Feb 17 20:48 GMT
+"bc_loader_nregs_too_big" time elapsed: 00:00:00
+----------------------------------------------------------
+
+22/27 Testing: vm_exec_add_i32
+22/27 Test: vm_exec_add_i32
+Command: "/Users/jahredlove/Documents/projects/jelly/vm/build/bin/vm_exec_tests" "exec_add_i32"
+Directory: /Users/jahredlove/Documents/projects/jelly/vm/build/ctest
+"vm_exec_add_i32" start time: Feb 17 20:48 GMT
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.16 sec
+----------------------------------------------------------
+Test Passed.
+"vm_exec_add_i32" end time: Feb 17 20:48 GMT
+"vm_exec_add_i32" time elapsed: 00:00:00
+----------------------------------------------------------
+
+23/27 Testing: vm_exec_spill_roundtrip
+23/27 Test: vm_exec_spill_roundtrip
+Command: "/Users/jahredlove/Documents/projects/jelly/vm/build/bin/vm_exec_tests" "exec_spill_roundtrip"
+Directory: /Users/jahredlove/Documents/projects/jelly/vm/build/ctest
+"vm_exec_spill_roundtrip" start time: Feb 17 20:48 GMT
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"vm_exec_spill_roundtrip" end time: Feb 17 20:48 GMT
+"vm_exec_spill_roundtrip" time elapsed: 00:00:00
+----------------------------------------------------------
+
+24/27 Testing: vm_exec_list_head_tail
+24/27 Test: vm_exec_list_head_tail
+Command: "/Users/jahredlove/Documents/projects/jelly/vm/build/bin/vm_exec_tests" "exec_list_head_tail"
+Directory: /Users/jahredlove/Documents/projects/jelly/vm/build/ctest
+"vm_exec_list_head_tail" start time: Feb 17 20:48 GMT
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"vm_exec_list_head_tail" end time: Feb 17 20:48 GMT
+"vm_exec_list_head_tail" time elapsed: 00:00:00
+----------------------------------------------------------
+
+25/27 Testing: vm_exec_list_is_nil
+25/27 Test: vm_exec_list_is_nil
+Command: "/Users/jahredlove/Documents/projects/jelly/vm/build/bin/vm_exec_tests" "exec_list_is_nil"
+Directory: /Users/jahredlove/Documents/projects/jelly/vm/build/ctest
+"vm_exec_list_is_nil" start time: Feb 17 20:48 GMT
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"vm_exec_list_is_nil" end time: Feb 17 20:48 GMT
+"vm_exec_list_is_nil" time elapsed: 00:00:00
+----------------------------------------------------------
+
+26/27 Testing: vm_exec_array_set_get_len
+26/27 Test: vm_exec_array_set_get_len
+Command: "/Users/jahredlove/Documents/projects/jelly/vm/build/bin/vm_exec_tests" "exec_array_set_get_len"
+Directory: /Users/jahredlove/Documents/projects/jelly/vm/build/ctest
+"vm_exec_array_set_get_len" start time: Feb 17 20:48 GMT
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"vm_exec_array_set_get_len" end time: Feb 17 20:48 GMT
+"vm_exec_array_set_get_len" time elapsed: 00:00:00
+----------------------------------------------------------
+
+27/27 Testing: vm_exec_array_len
+27/27 Test: vm_exec_array_len
+Command: "/Users/jahredlove/Documents/projects/jelly/vm/build/bin/vm_exec_tests" "exec_array_len"
+Directory: /Users/jahredlove/Documents/projects/jelly/vm/build/ctest
+"vm_exec_array_len" start time: Feb 17 20:48 GMT
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"vm_exec_array_len" end time: Feb 17 20:48 GMT
+"vm_exec_array_len" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Feb 17 20:48 GMT

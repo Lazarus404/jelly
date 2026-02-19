@@ -1,0 +1,8 @@
+let o = { a: 7, b: "hi" };
+let ok =
+  (o.a == 7) &&
+  (Bytes.len(o.b) == 2) &&
+  (Bytes.get_u8(o.b, 0) == 104) &&
+  (Bytes.get_u8(o.b, 1) == 105);
+if (ok) { "ok" } else { "bad" }
+

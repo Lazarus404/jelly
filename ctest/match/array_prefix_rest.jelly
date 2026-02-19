@@ -1,0 +1,6 @@
+let arr = [0, 1, 2, 3];
+match (arr) {
+  [0, 1, 2, ...rest] when (Array.len(rest) == 1) => { "ok" },
+  _ => { "bad" },
+}
+

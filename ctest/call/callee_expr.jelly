@@ -1,0 +1,6 @@
+let f : I32 -> I32 = fn(x) { return x; };
+let g : I32 -> I32 = fn(x) { return x; };
+
+let r : I32 = (if (true) { f } else { g })(7);
+if (r == 7) { "ok" } else { "bad" }
+

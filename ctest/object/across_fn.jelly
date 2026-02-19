@@ -1,0 +1,4 @@
+let f: (Object) -> I32 = fn(o) { return o.a; };
+let o = { a: 7 };
+if (f(o) == 7) { "ok" } else { "bad" }
+

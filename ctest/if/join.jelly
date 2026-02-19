@@ -1,0 +1,14 @@
+let cond = true;
+let x = "he";
+let y = if (cond) { x + "llo" } else { x + "no" };
+let z = y + "!";
+let ok =
+  (Bytes.len(z) == 6) &&
+  (Bytes.get_u8(z, 0) == 104) &&
+  (Bytes.get_u8(z, 1) == 101) &&
+  (Bytes.get_u8(z, 2) == 108) &&
+  (Bytes.get_u8(z, 3) == 108) &&
+  (Bytes.get_u8(z, 4) == 111) &&
+  (Bytes.get_u8(z, 5) == 33);
+if (ok) { "ok" } else { "bad" }
+

@@ -1,0 +1,10 @@
+let b = "he" + "llo";
+let ok =
+  (Bytes.len(b) == 5) &&
+  (Bytes.get_u8(b, 0) == 104) &&
+  (Bytes.get_u8(b, 1) == 101) &&
+  (Bytes.get_u8(b, 2) == 108) &&
+  (Bytes.get_u8(b, 3) == 108) &&
+  (Bytes.get_u8(b, 4) == 111);
+if (ok) { "ok" } else { "bad" }
+

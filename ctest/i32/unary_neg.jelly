@@ -1,0 +1,4 @@
+let n = 3;
+let m = -n + 4;
+if (m == 1) { "ok" } else { "bad" }
+

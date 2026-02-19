@@ -1,0 +1,7 @@
+let p = { a: 7 };
+let o = { __proto__: p };
+match (o) {
+  {a: 7} => { "bad" }
+  _ => { "ok" }
+}
+

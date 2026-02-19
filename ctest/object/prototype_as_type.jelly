@@ -1,0 +1,13 @@
+prototype Box<T> {
+  a: "ok";
+};
+
+let a: Box<I32> = new Box<I32>();
+
+let ok =
+  Bytes.eq(a.a, "ok") &&
+  Bytes.eq(a.__template__, "Box") &&
+  Bytes.eq(a.__type_args__, "I32");
+
+if (ok) { "ok" } else { "bad" }
+

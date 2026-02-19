@@ -1,0 +1,5 @@
+let inc : I32 -> I32 = fn(x) { return x; };
+let i : I32 = 0;
+while (i < 3) { i = inc(i); i = i + 1; }
+if (i == 3) { "ok" } else { "bad" }
+

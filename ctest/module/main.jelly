@@ -1,0 +1,6 @@
+import math as Math;
+import consts as C;
+
+let r: I32 = Math.add(C.x, 3);
+if (r == 7) { "ok" } else { "bad" }
+

@@ -1,0 +1,112 @@
+#include <jelly/object.h>
+#include <jelly/gc.h>
+
+#include <stdlib.h>
+#include <string.h>
+
+static uint32_t hash_u32(uint32_t x) {
+  // A simple integer hash (xorshift/mix).
+  x ^= x >> 16;
+  x *= 0x7feb352du;
+  x ^= x >> 15;
+  x *= 0x846ca68bu;
+  x ^= x >> 16;
+  return x;
+}
+
+static void ensure_cap(jelly_object* o);
+
+jelly_object* jelly_object_new(struct jelly_vm* vm, uint32_t type_id) {
+  jelly_object* o = (jelly_object*)jelly_gc_alloc(vm, sizeof(jelly_object));
+  o->h.kind = (uint32_t)JELLY_OBJ_OBJECT;
+  o->h.type_id = type_id;
+  o->proto = NULL;
+  o->cap = 8;
+  o->len = 0;
+  o->keys = (uint32_t*)malloc(sizeof(uint32_t) * o->cap);
+  o->vals = (jelly_value*)malloc(sizeof(jelly_value) * o->cap);
+  o->states = (uint8_t*)malloc(o->cap);
+  if(!o->keys || !o->vals || !o->states) abort();
+  memset(o->states, 0, o->cap);
+  return o;
+}
+
+static uint32_t find_slot(jelly_object* o, uint32_t atom_id, int* found) {
+  uint32_t mask = o->cap - 1u;
+  uint32_t h = hash_u32(atom_id);
+  uint32_t i = h & mask;
+  uint32_t first_tomb = UINT32_MAX;
+
+  for(;;) {
+    uint8_t st = o->states[i];
+    if(st == 0) {
+      *found = 0;
+      return (first_tomb != UINT32_MAX) ? first_tomb : i;
+    }
+    if(st == 1 && o->keys[i] == atom_id) {
+      *found = 1;
+      return i;
+    }
+    if(st == 2 && first_tomb == UINT32_MAX) first_tomb = i;
+    i = (i + 1u) & mask;
+  }
+}
+
+int jelly_object_has(jelly_object* o, uint32_t atom_id) {
+  int found = 0;
+  (void)find_slot(o, atom_id, &found);
+  return found;
+}
+
+jelly_value jelly_object_get(jelly_object* o, uint32_t atom_id) {
+  int found = 0;
+  uint32_t i = find_slot(o, atom_id, &found);
+  if(!found) return jelly_make_null();
+  return o->vals[i];
+}
+
+void jelly_object_set(jelly_object* o, uint32_t atom_id, jelly_value v) {
+  ensure_cap(o);
+  int found = 0;
+  uint32_t i = find_slot(o, atom_id, &found);
+  if(!found) {
+    o->keys[i] = atom_id;
+    o->states[i] = 1;
+    o->len++;
+  }
+  o->vals[i] = v;
+}
+
+static void rehash(jelly_object* o, uint32_t new_cap) {
+  uint32_t* old_keys = o->keys;
+  jelly_value* old_vals = o->vals;
+  uint8_t* old_states = o->states;
+  uint32_t old_cap = o->cap;
+
+  o->cap = new_cap;
+  o->keys = (uint32_t*)malloc(sizeof(uint32_t) * o->cap);
+  o->vals = (jelly_value*)malloc(sizeof(jelly_value) * o->cap);
+  o->states = (uint8_t*)malloc(o->cap);
+  if(!o->keys || !o->vals || !o->states) abort();
+  memset(o->states, 0, o->cap);
+
+  uint32_t old_len = o->len;
+  o->len = 0;
+  for(uint32_t i = 0; i < old_cap; i++) {
+    if(old_states[i] == 1) {
+      jelly_object_set(o, old_keys[i], old_vals[i]);
+    }
+  }
+  o->len = old_len;
+
+  free(old_keys);
+  free(old_vals);
+  free(old_states);
+}
+
+static void ensure_cap(jelly_object* o) {
+  // Grow when load factor would exceed ~0.7
+  if((o->len + 1u) * 10u < o->cap * 7u) return;
+  rehash(o, o->cap * 2u);
+}
+

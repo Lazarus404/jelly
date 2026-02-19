@@ -1,0 +1,8 @@
+let r1 = try { throw 1; "bad" } catch (e) { "ok" };
+let ok1 = (Bytes.len(r1) == 2) && (Bytes.get_u8(r1, 0) == 111) && (Bytes.get_u8(r1, 1) == 107);
+
+let r2 = try { let x = Bytes.get_u8("a", 1); "bad" } catch (e) { "ok" };
+let ok2 = (Bytes.len(r2) == 2) && (Bytes.get_u8(r2, 0) == 111) && (Bytes.get_u8(r2, 1) == 107);
+
+if (ok1 && ok2) { "ok" } else { "bad" }
+
