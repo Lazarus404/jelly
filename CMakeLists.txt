@@ -1,0 +1,22 @@
+cmake_minimum_required(VERSION 3.16)
+
+project(jelly
+  VERSION 0.1.0
+  LANGUAGES C
+)
+
+# Put all binaries in one place (nice for local dev).
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+
+# Keeping this top-level CMake entrypoint makes 
+# `cmake -S . -B build` work, while still allowing `vm/`
+# to be built standalone.
+add_subdirectory(vm)
+
+option(JELLYVM_BUILD_BENCH "Build microbench harness" OFF)
+if(JELLYVM_BUILD_BENCH)
+  add_subdirectory(bench)
+endif()
+
