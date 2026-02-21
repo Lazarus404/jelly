@@ -1,0 +1,8 @@
+let fib: I32 -> I32 = fn(n) {
+  return if (n < 2) { 1 } else { fib(n - 1) + fib(n - 2) };
+};
+
+let r: I32 = fib(30);
+System.assert(r == 1346269);
+"ok"
+

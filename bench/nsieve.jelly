@@ -1,0 +1,37 @@
+let pow2: I32 -> I32 = fn(k) {
+  let r: I32 = 1;
+  let i: I32 = 0;
+  while (i < k) {
+    r = r + r;
+    i = i + 1;
+  }
+  return r;
+};
+
+let nsieve: I32 -> I32 = fn(m) {
+  let a = Bytes.new(m);
+  let count: I32 = 0;
+  let i: I32 = 2;
+  while (i < m) {
+    let j: I32 = m;
+    if (Bytes.get_u8(a, i) == 0) { count = count + 1; j = i + i; 0 } else { 0 };
+    while (j < m) {
+      Bytes.set_u8(a, j, 1);
+      j = j + i;
+    }
+    i = i + 1;
+  }
+  return count;
+};
+
+let n: I32 = 2;
+let small = nsieve(10);
+System.assert(small == 4);
+let c0 = nsieve(10000 * pow2(n));
+let c1 = nsieve(10000 * pow2(n - 1));
+let c2 = nsieve(10000 * pow2(n - 2));
+System.assert(c0 == 4203);
+System.assert(c1 == 2262);
+System.assert(c2 == 1229);
+"ok"
+
