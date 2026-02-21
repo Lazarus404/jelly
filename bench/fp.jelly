@@ -1,0 +1,15 @@
+let x: F64 = 1.0;
+let y: F64 = 1.0;
+let i: I32 = 1000000;
+
+while (i > 0) {
+  x = x * 1.000000001;
+  y = y / 1.000000001;
+  i = i - 1;
+}
+
+let p: F64 = x * y;
+System.assert(p > 0.999);
+System.assert(p < 1.001);
+"ok"
+

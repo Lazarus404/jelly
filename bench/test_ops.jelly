@@ -1,0 +1,28 @@
+let eq_i32: (I32, I32) -> I32 = fn(a, b) {
+  System.assert(a == b);
+  return 0;
+};
+
+let eq_f64: (F64, F64) -> I32 = fn(a, b) {
+  System.assert(a == b);
+  return 0;
+};
+
+let small: I32 = 32767;
+let med: I32 = 2147418112;
+let less: I32 = (0 - 2147483647) - 1;
+let spe1: I32 = 0 - 1073741824;
+
+let _ = eq_i32(small * small, 1073676289);
+let _ = eq_i32(med + med, 0 - 131072);
+let _ = eq_i32(less + 1, 0 - 2147483647);
+let _ = eq_i32(spe1 / 2, 0 - 536870912);
+
+let medf: F64 = med;
+let _ = eq_f64(1.0 - 1.25, 0.0 - 0.25);
+let _ = eq_f64(1.25 - 1.0, 0.25);
+let _ = eq_f64(medf + 1.1, 2147418113.1);
+let _ = eq_f64(1.1 + medf, 2147418113.1);
+
+"ok"
+

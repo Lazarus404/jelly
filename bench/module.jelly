@@ -1,0 +1,22 @@
+let boot: I32 -> object = fn(i) {
+  let o = {};
+  o.x = i;
+  o.y = i + 1;
+  o.z = i + 2;
+  return o;
+};
+
+let n: I32 = 100000;
+let i: I32 = 0;
+let cache: object = {};
+let sum: I32 = 0;
+
+while (i < n) {
+  cache = boot(i);
+  sum = sum + cache.y;
+  i = i + 1;
+}
+
+System.assert(sum > 0);
+"ok"
+

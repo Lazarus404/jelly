@@ -1,0 +1,74 @@
+let fannkuch: I32 -> I32 = fn(n) {
+  let perm = Array.new<I32>(n);
+  let perm1 = Array.new<I32>(n);
+  let count = Array.new<I32>(n);
+  Array.set(count, 0, 0);
+
+  let maxflips: I32 = 0;
+
+  let r: I32 = n;
+  let i: I32 = 0;
+  while (i < n) {
+    Array.set(perm1, i, i);
+    i = i + 1;
+  }
+
+  while (true) {
+    while (r != 1) {
+      Array.set(count, r - 1, r);
+      r = r - 1;
+    }
+
+    if (Array.get(perm1, 0) != 0 && Array.get(perm1, n - 1) != n - 1) {
+      i = 0;
+      while (i < n) {
+        Array.set(perm, i, Array.get(perm1, i));
+        i = i + 1;
+      }
+
+      let flips: I32 = 0;
+      let k: I32 = Array.get(perm, 0);
+      while (k != 0) {
+        let ii: I32 = 1;
+        let jj: I32 = k - 1;
+        while (ii < jj) {
+          let tmp: I32 = Array.get(perm, ii);
+          Array.set(perm, ii, Array.get(perm, jj));
+          Array.set(perm, jj, tmp);
+          ii = ii + 1;
+          jj = jj - 1;
+        }
+        flips = flips + 1;
+
+        let j2: I32 = Array.get(perm, k);
+        Array.set(perm, k, k);
+        k = j2;
+      }
+
+      if (flips > maxflips) { maxflips = flips; 0 } else { 0 };
+      0
+    } else {
+      0
+    };
+
+    while (true) {
+      if (r == n) { return maxflips; 0 } else { 0 };
+      let perm0: I32 = Array.get(perm1, 0);
+      i = 0;
+      while (i < r) {
+        Array.set(perm1, i, Array.get(perm1, i + 1));
+        i = i + 1;
+      }
+      Array.set(perm1, r, perm0);
+
+      Array.set(count, r, Array.get(count, r) - 1);
+      if (Array.get(count, r) > 0) { break; 0 } else { 0 };
+      r = r + 1;
+    }
+  }
+  return maxflips;
+};
+
+let r: I32 = fannkuch(7);
+System.assert(r == 16);
+"ok"
