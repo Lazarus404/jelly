@@ -344,6 +344,12 @@ pub fn link_modules_and_build_entry(
         let map_fun = |fid: u32| -> u32 {
             if fid == 0 {
                 0
+            } else if m.prelude_count == 0 {
+                // Artifact with no embedded prelude: all fid>=1 are user functions.
+                // Link output logical index = (out.funcs array index) + 1 (0 is native).
+                // The first appended user function lands at array index `func_base`.
+                // Therefore: fid=1 -> func_base+1, fid=2 -> func_base+2, ...
+                func_base + fid
             } else if !m.used_prelude.is_empty() {
                 // Variable prelude: compact 1..=prelude_count -> full prelude; prelude_count+1+ -> user
                 if (fid as usize) <= m.used_prelude.len() {

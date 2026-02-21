@@ -69,17 +69,16 @@ def main() -> int:
     lua = which_lua()
 
     benches: list[dict[str, str]] = [
-        {"name": "neko_startup", "jelly": "neko_startup.jelly", "lua": "neko_startup.lua"},
-        {"name": "neko_fib", "jelly": "neko_fib.jelly", "lua": "neko_fib.lua"},
-        {"name": "neko_ackerman", "jelly": "neko_ackerman.jelly", "lua": "neko_ackerman.lua"},
-        {"name": "neko_fannkuch", "jelly": "neko_fannkuch.jelly", "lua": "neko_fannkuch.lua"},
-
-        {"name": "neko_recursive", "jelly": "neko_recursive.jelly", "lua": "neko_recursive.lua"},
-        {"name": "neko_nsieve", "jelly": "neko_nsieve.jelly", "lua": "neko_nsieve.lua"},
-        {"name": "neko_binary_trees", "jelly": "", "lua": "neko_binary_trees.lua"},
-        {"name": "neko_fp", "jelly": "neko_fp.jelly", "lua": "neko_fp.lua"},
-        {"name": "neko_module", "jelly": "neko_module.jelly", "lua": "neko_module.lua"},
-        {"name": "neko_nbodies", "jelly": "neko_nbodies.jelly", "lua": "neko_nbodies.lua"},
+        {"name": "startup", "jelly": "startup.jelly", "lua": "startup.lua"},
+        {"name": "fib", "jelly": "fib.jelly", "lua": "fib.lua"},
+        {"name": "ackerman", "jelly": "ackerman.jelly", "lua": "ackerman.lua"},
+        {"name": "fannkuch", "jelly": "fannkuch.jelly", "lua": "fannkuch.lua"},
+        {"name": "recursive", "jelly": "recursive.jelly", "lua": "recursive.lua"},
+        {"name": "nsieve", "jelly": "nsieve.jelly", "lua": "nsieve.lua"},
+        {"name": "binary_trees", "jelly": "", "lua": "binary_trees.lua"},
+        {"name": "fp", "jelly": "fp.jelly", "lua": "fp.lua"},
+        {"name": "module", "jelly": "module.jelly", "lua": "module.lua"},
+        {"name": "nbodies", "jelly": "nbodies.jelly", "lua": "nbodies.lua"},
     ]
 
     rx: re.Pattern[str] | None = None
