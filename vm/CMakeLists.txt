@@ -115,3 +115,12 @@ jellyvm_enable_warnings(jellyvm_cli)
 jellyvm_enable_sanitizers(jellyvm_cli)
 
 install(FILES src/include/jelly.h DESTINATION include)
+
+# --- Tests -------------------------------------------------------------------
+if(JELLYVM_BUILD_TESTS)
+  include(CTest)
+  if(BUILD_TESTING)
+    # Tests live at repo-root `./ctest` by convention.
+    add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../ctest" "${CMAKE_BINARY_DIR}/ctest")
+  endif()
+endif()

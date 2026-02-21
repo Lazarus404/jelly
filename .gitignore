@@ -3,3 +3,6 @@
 jellyc/target/
 vm/build/
 vm/cmake/
+
+.DS_Store
+*.jlyb
