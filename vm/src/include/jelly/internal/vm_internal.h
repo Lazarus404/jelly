@@ -65,6 +65,12 @@ struct jelly_vm {
   uint32_t spill_len;
   uint32_t spill_cap;
 
+  /* Safety limits */
+  uint64_t fuel_limit;
+  uint64_t fuel_remaining;
+  uint32_t max_bytes_len;
+  uint32_t max_array_len;
+
   void* gc_objects;
   size_t gc_bytes_live;
   size_t gc_next_collect;

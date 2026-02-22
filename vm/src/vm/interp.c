@@ -32,6 +32,9 @@
 #include <stdlib.h>
 
 static jelly_exec_status exec_entry(jelly_vm* vm, const jelly_bc_module* m, const jelly_bc_function* entry, jelly_value* out) {
+  /* Reset per-run fuel. */
+  vm->fuel_remaining = vm->fuel_limit;
+
   vm->call_frames = NULL;
   vm->call_frames_len = 0;
   vm->call_frames_cap = 0;

@@ -91,9 +91,9 @@ let offset_momentum: (object, object, object, object, object) -> I32 = fn(sun, j
   let px: F64 = jup.vx * jup.mass + sat.vx * sat.mass + ura.vx * ura.mass + nep.vx * nep.mass;
   let py: F64 = jup.vy * jup.mass + sat.vy * sat.mass + ura.vy * ura.mass + nep.vy * nep.mass;
   let pz: F64 = jup.vz * jup.mass + sat.vz * sat.mass + ura.vz * ura.mass + nep.vz * nep.mass;
-  sun.vx = 0.0 - px / solar_mass;
-  sun.vy = 0.0 - py / solar_mass;
-  sun.vz = 0.0 - pz / solar_mass;
+  sun.vx = -px / solar_mass;
+  sun.vy = -py / solar_mass;
+  sun.vz = -pz / solar_mass;
   return 0;
 };
 
@@ -108,46 +108,48 @@ let round9: F64 -> I32 = fn(e) {
 let sun = { x: 0.0, y: 0.0, z: 0.0, vx: 0.0, vy: 0.0, vz: 0.0, mass: solar_mass };
 let jup = {
   x: 4.84143144246472090,
-  y: 0.0 - 1.16032004402742839,
-  z: 0.0 - 0.103622044471123109,
+  y: -1.16032004402742839,
+  z: -0.103622044471123109,
   vx: 0.00166007664274403694 * days_per_year,
   vy: 0.00769901118419740425 * days_per_year,
-  vz: 0.0 - 0.0000690460016972063023 * days_per_year,
+  vz: -0.0000690460016972063023 * days_per_year,
   mass: 0.000954791938424326609 * solar_mass
 };
 let sat = {
   x: 8.34336671824457987,
   y: 4.12479856412430479,
-  z: 0.0 - 0.403523417114321381,
-  vx: 0.0 - 0.00276742510726862411 * days_per_year,
+  z: -0.403523417114321381,
+  vx: -0.00276742510726862411 * days_per_year,
   vy: 0.00499852801234917238 * days_per_year,
   vz: 0.0000230417297573763929 * days_per_year,
   mass: 0.000285885980666130812 * solar_mass
 };
 let ura = {
   x: 12.8943695621391310,
-  y: 0.0 - 15.1111514016986312,
-  z: 0.0 - 0.223307578892655734,
+  y: -15.1111514016986312,
+  z: -0.223307578892655734,
   vx: 0.00296460137564761618 * days_per_year,
   vy: 0.00237847173959480950 * days_per_year,
-  vz: 0.0 - 0.0000296589568540237556 * days_per_year,
+  vz: -0.0000296589568540237556 * days_per_year,
   mass: 0.0000436624404335156298 * solar_mass
 };
 let nep = {
   x: 15.3796971148509165,
-  y: 0.0 - 25.9193146099879641,
+  y: -25.9193146099879641,
   z: 0.179258772950371181,
   vx: 0.00268067772490389322 * days_per_year,
   vy: 0.00162824170038242295 * days_per_year,
-  vz: 0.0 - 0.0000951592254519715870 * days_per_year,
+  vz: -0.0000951592254519715870 * days_per_year,
   mass: 0.0000515138902046611451 * solar_mass
 };
 
 let _ = offset_momentum(sun, jup, sat, ura, nep);
 let e0: I32 = round9(energy(sun, jup, sat, ura, nep));
-// Expected -169075164; ±25k for cross-platform FP (sqrt, op order)
-System.assert(e0 >= 0 - 169100164);
-System.assert(e0 <= 0 - 169050164);
+let want0: I32 = 0 - 169075164;
+// Lua expects exact e0/e1 on some platforms, but small cross-platform FP drift
+// (sqrt/libm + op order) can move this by a few 1e-5 at the energy scale.
+System.assert(e0 >= want0 - 25000);
+System.assert(e0 <= want0 + 25000);
 
 let n: I32 = 1000;
 let i: I32 = 0;
@@ -157,8 +159,8 @@ while (i < n) {
 }
 
 let e1: I32 = round9(energy(sun, jup, sat, ura, nep));
-// Expected -169087605; ±25k for cross-platform FP
-System.assert(e1 >= 0 - 169112605);
-System.assert(e1 <= 0 - 169062605);
+let want1: I32 = 0 - 169087605;
+System.assert(e1 >= want1 - 25000);
+System.assert(e1 <= want1 + 25000);
 "ok"
 

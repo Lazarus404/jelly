@@ -36,6 +36,7 @@ use crate::ir::{IrBuilder, IrOp, IrTerminator, TypeId, VRegId};
 
 use super::{bind_local, intern_atom, lookup_var, resolve_opt_ty, FnCtx, LowerCtx, LoopTargets, T_BOOL, T_DYNAMIC};
 use super::expr::{coerce_numeric, is_narrowing_numeric, lower_expr, lower_expr_expect};
+use super::expr::fn_infer;
 
 /// Collect variable names assigned in the given statements (Assign and Let).
 fn vars_assigned_in(stmts: &[Stmt]) -> HashSet<String> {
@@ -300,6 +301,42 @@ pub fn lower_stmt(s: &Stmt, ctx: &mut LowerCtx, b: &mut IrBuilder) -> Result<(),
                 let (v, tid) = lower_expr_expect(expr, Some(et), ctx, b)?;
                 ctx.pending_fn_self = None;
                 if tid != et {
+                    return Err(CompileError::new(ErrorKind::Type, s.span, "let initializer type mismatch"));
+                }
+                if v != dst {
+                    b.emit(s.span, IrOp::Mov { dst, src: v });
+                }
+                if *exported {
+                    let exports_obj = ctx.exports_obj.ok_or_else(|| {
+                        CompileError::new(
+                            ErrorKind::Name,
+                            s.span,
+                            "export requires module compilation (use --backend ir with imports/exports)",
+                        )
+                    })?;
+                    let atom_id = intern_atom(name, ctx);
+                    b.emit(s.span, IrOp::ObjSetAtom { obj: exports_obj, atom_id, value: dst });
+                }
+                Ok(())
+            } else if expect.is_none() && matches!(&expr.node, ExprKind::Fn { .. }) {
+                // Infer a function type from the fn literal body, then lower using that
+                // inferred type (enables recursion sugar).
+                let (params, body, tail) = match &expr.node {
+                    ExprKind::Fn { params, body, tail } => (params, body, tail),
+                    _ => unreachable!(),
+                };
+                let (fun_tid, _args, _ret) =
+                    fn_infer::infer_fn_type_for_let(name.as_str(), params, body, tail, ctx)?;
+
+                ctx.pending_fn_self = Some((name.clone(), fun_tid));
+                let dst = b.new_vreg(fun_tid);
+                ctx.env_stack
+                    .last_mut()
+                    .expect("env stack")
+                    .insert(name.clone(), super::Binding { v: dst, tid: fun_tid });
+                let (v, tid) = lower_expr_expect(expr, Some(fun_tid), ctx, b)?;
+                ctx.pending_fn_self = None;
+                if tid != fun_tid {
                     return Err(CompileError::new(ErrorKind::Type, s.span, "let initializer type mismatch"));
                 }
                 if v != dst {

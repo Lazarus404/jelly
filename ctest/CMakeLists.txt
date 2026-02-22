@@ -225,5 +225,6 @@ if(EXISTS "${JELLYC_BIN}")
 
   add_jellyc_ok_test(ast_bytes_hello ast bytes/hello.jelly)
   add_jellyc_ok_test(ir_bytes_hello ir bytes/hello.jelly)
+  add_jellyc_ok_test(ir_fn_infer_ackerman ir fn/infer_ackerman.jelly)
 endif()
 
