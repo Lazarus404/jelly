@@ -37,6 +37,10 @@ op_result op_bytes_new(exec_ctx* ctx, const jelly_insn* ins) {
   call_frame* fr = ctx->fr;
 
   uint32_t len = vm_load_u32(&fr->rf, ins->b);
+  if(vm->max_bytes_len && len > vm->max_bytes_len) {
+    (void)jelly_vm_trap(vm, JELLY_TRAP_LIMIT, "bytes_new length exceeds limit");
+    return OP_CONTINUE;
+  }
   uint32_t type_id = f->reg_types[ins->a];
   jelly_bytes* b = jelly_bytes_new(vm, type_id, len);
   vm_store_ptr(&fr->rf, ins->a, b);
@@ -118,6 +122,10 @@ op_result op_bytes_concat2(exec_ctx* ctx, const jelly_insn* ins) {
     return OP_CONTINUE;
   }
   uint32_t total = (uint32_t)total64;
+  if(vm->max_bytes_len && total > vm->max_bytes_len) {
+    (void)jelly_vm_trap(vm, JELLY_TRAP_LIMIT, "bytes_concat2 length exceeds limit");
+    return OP_CONTINUE;
+  }
   uint32_t type_id = f->reg_types[ins->a];
   jelly_bytes* outb = jelly_bytes_new(vm, type_id, total);
   jelly_gc_push_root(vm, jelly_from_ptr(outb));
@@ -159,6 +167,10 @@ op_result op_bytes_concat_many(exec_ctx* ctx, const jelly_insn* ins) {
   }
 
   uint32_t total = (uint32_t)total64;
+  if(vm->max_bytes_len && total > vm->max_bytes_len) {
+    (void)jelly_vm_trap(vm, JELLY_TRAP_LIMIT, "bytes_concat_many length exceeds limit");
+    return OP_CONTINUE;
+  }
   uint32_t type_id = f->reg_types[ins->a];
   jelly_bytes* outb = jelly_bytes_new(vm, type_id, total);
   jelly_gc_push_root(vm, jelly_from_ptr(outb));

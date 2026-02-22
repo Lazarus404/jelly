@@ -59,6 +59,16 @@ jelly_exec_status vm_exec_loop(exec_ctx* ctx) {
 #ifndef NDEBUG
     if(fr->pc >= f->ninsns) jelly_vm_panic();
 #endif
+
+    /* Instruction fuel limit: prevents runaway infinite loops. */
+    if(vm->fuel_limit) {
+      if(vm->fuel_remaining == 0) {
+        (void)jelly_vm_trap(vm, JELLY_TRAP_FUEL, "instruction limit exceeded");
+        goto CHECK_EXC;
+      }
+      vm->fuel_remaining--;
+    }
+
     const jelly_insn* ins = &f->insns[fr->pc++];
     ctx->f = f;
     ctx->fr = fr;

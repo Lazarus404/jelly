@@ -36,6 +36,10 @@ op_result op_array_new(exec_ctx* ctx, const jelly_insn* ins) {
   call_frame* fr = ctx->fr;
 
   uint32_t len = vm_load_u32(&fr->rf, ins->b);
+  if(vm->max_array_len && len > vm->max_array_len) {
+    (void)jelly_vm_trap(vm, JELLY_TRAP_LIMIT, "array_new length exceeds limit");
+    return OP_CONTINUE;
+  }
   uint32_t type_id = f->reg_types[ins->a];
   jelly_array* a = jelly_array_new(vm, type_id, len);
   if(a && a->data && len) {

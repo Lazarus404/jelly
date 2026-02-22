@@ -1914,7 +1914,7 @@ pub fn build_program_module(p: &Program) -> Result<Module, CompileError> {
                             return Err(CompileError::new(
                                 ErrorKind::Type,
                                 expr.span,
-                                "fn literal requires a type annotation on its let binding",
+                                "fn literal requires a type annotation on its let binding (function type inference is not implemented yet).\nhelp: `let f: (I32, I32) -> I32 = fn(x, y) { ... };` (required for recursion).",
                             ));
                         }
                         let v = compile_expr(expr, env, ctx)?;
