@@ -75,7 +75,7 @@ def main() -> int:
         {"name": "fannkuch", "jelly": "fannkuch.jelly", "lua": "fannkuch.lua"},
         {"name": "recursive", "jelly": "recursive.jelly", "lua": "recursive.lua"},
         {"name": "nsieve", "jelly": "nsieve.jelly", "lua": "nsieve.lua"},
-        {"name": "binary_trees", "jelly": "", "lua": "binary_trees.lua"},
+        {"name": "binary_trees", "jelly": "binary_trees.jelly", "lua": "binary_trees.lua"},
         {"name": "fp", "jelly": "fp.jelly", "lua": "fp.lua"},
         {"name": "module", "jelly": "module.jelly", "lua": "module.lua"},
         {"name": "nbodies", "jelly": "nbodies.jelly", "lua": "nbodies.lua"},

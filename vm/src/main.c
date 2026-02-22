@@ -34,6 +34,15 @@
 #include <stdlib.h>
 #include <string.h>
 
+static uint64_t parse_u64_env(const char* key, uint64_t def) {
+	const char* s = getenv(key);
+	if(!s || !*s) return def;
+	char* end = NULL;
+	unsigned long long v = strtoull(s, &end, 10);
+	if(end == s) return def;
+	return (uint64_t)v;
+}
+
 static uint8_t* read_file(const char* path, size_t* out_size) {
 	if(out_size) *out_size = 0;
 	FILE* f = fopen(path, "rb");
@@ -102,6 +111,22 @@ int main(int argc, char** argv) {
 		fprintf(stderr, "error: failed to create VM\n");
 		jelly_bc_free(m);
 		return 2;
+	}
+
+	/* Safety defaults (override via env):
+	   - JELLY_FUEL: instruction budget (0 disables)
+	   - JELLY_MAX_BYTES: max Bytes length (0 disables)
+	   - JELLY_MAX_ARRAY: max Array length (0 disables) */
+	jelly_vm_set_fuel(vm, parse_u64_env("JELLY_FUEL", 200000000ull));
+	{
+		uint64_t v = parse_u64_env("JELLY_MAX_BYTES", (uint64_t)(64u * 1024u * 1024u));
+		if(v > 0xffffffffull) v = 0xffffffffull;
+		jelly_vm_set_max_bytes_len(vm, (uint32_t)v);
+	}
+	{
+		uint64_t v = parse_u64_env("JELLY_MAX_ARRAY", (uint64_t)(8u * 1024u * 1024u));
+		if(v > 0xffffffffull) v = 0xffffffffull;
+		jelly_vm_set_max_array_len(vm, (uint32_t)v);
 	}
 
 	jelly_value out = jelly_make_null();

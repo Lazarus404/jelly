@@ -30,6 +30,7 @@
 mod call;
 mod control;
 mod fn_;
+pub(super) mod fn_infer;
 mod lit;
 mod r#match;
 mod new_;

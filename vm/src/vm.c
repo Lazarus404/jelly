@@ -42,6 +42,10 @@ jelly_vm* jelly_vm_create(void) {
   jelly_vm* vm = (jelly_vm*)calloc(1, sizeof(jelly_vm));
   if (!vm) return NULL;
   vm->call_frames_max = 100000u;
+  vm->fuel_limit = 0;
+  vm->fuel_remaining = 0;
+  vm->max_bytes_len = 0;
+  vm->max_array_len = 0;
   return vm;
 }
 
@@ -87,5 +91,21 @@ jelly_trap_code jelly_vm_last_trap_code(const jelly_vm* vm) {
 
 const char* jelly_vm_last_trap_msg(const jelly_vm* vm) {
   return vm ? vm->trap_msg : NULL;
+}
+
+void jelly_vm_set_fuel(jelly_vm* vm, uint64_t fuel) {
+  if(!vm) return;
+  vm->fuel_limit = fuel;
+  vm->fuel_remaining = fuel;
+}
+
+void jelly_vm_set_max_bytes_len(jelly_vm* vm, uint32_t max_len) {
+  if(!vm) return;
+  vm->max_bytes_len = max_len;
+}
+
+void jelly_vm_set_max_array_len(jelly_vm* vm, uint32_t max_len) {
+  if(!vm) return;
+  vm->max_array_len = max_len;
 }
 

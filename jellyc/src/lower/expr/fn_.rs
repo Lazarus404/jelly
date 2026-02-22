@@ -37,6 +37,7 @@ use crate::ir::{BlockId, IrBuilder, IrOp, IrTerminator, TypeId, VRegId};
 use crate::lower::{lower_stmt, Binding, FnCtx, LowerCtx};
 
 use super::lower_expr;
+use super::fn_infer;
 
 pub fn lower_fn_expr(
     e: &crate::ast::Expr,
@@ -47,13 +48,21 @@ pub fn lower_fn_expr(
     ctx: &mut LowerCtx,
     b: &mut IrBuilder,
 ) -> Result<(VRegId, TypeId), CompileError> {
-    let expect_tid = expect.ok_or_else(|| {
-        CompileError::new(
+    let expect_tid = if let Some(t) = expect {
+        t
+    } else if let Some((self_name, _)) = ctx.pending_fn_self.clone() {
+        // If we're lowering `let f = fn(...) { ... }` without an explicit annotation,
+        // `lower_stmt` should have set `pending_fn_self` so we can infer a signature here.
+        let (fun_tid, _args, _ret) =
+            fn_infer::infer_fn_type_for_let(self_name.as_str(), params, body, tail, ctx)?;
+        fun_tid
+    } else {
+        return Err(CompileError::new(
             ErrorKind::Type,
             e.span,
-            "function literal requires a type annotation",
-        )
-    })?;
+            "function literal requires a type annotation.\nhelp: annotate the let binding, e.g. `let f: (I32, I32) -> I32 = fn(x, y) { ... };`",
+        ));
+    };
 
     let te = ctx
         .type_ctx

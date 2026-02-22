@@ -402,6 +402,8 @@ typedef enum jelly_trap_code {
   JELLY_TRAP_NULL_DEREF = 3,
   JELLY_TRAP_THROWN = 4,
   JELLY_TRAP_STACK_OVERFLOW = 5,
+  JELLY_TRAP_FUEL = 6,
+  JELLY_TRAP_LIMIT = 7,
 } jelly_trap_code;
 
 struct jelly_vm;
@@ -416,6 +418,14 @@ jelly_exec_status jelly_vm_exec_status(jelly_vm* vm, const jelly_bc_module* m, j
 void jelly_vm_clear_trap(jelly_vm* vm);
 jelly_trap_code jelly_vm_last_trap_code(const jelly_vm* vm);
 const char* jelly_vm_last_trap_msg(const jelly_vm* vm);
+
+/* --- safety limits (optional) --- */
+/* Fuel (instruction budget): 0 disables. If enabled, fuel is reset per exec(). */
+void jelly_vm_set_fuel(jelly_vm* vm, uint64_t fuel);
+/* Maximum Bytes length permitted by ops that allocate Bytes (0 disables). */
+void jelly_vm_set_max_bytes_len(jelly_vm* vm, uint32_t max_len);
+/* Maximum Array length permitted by ops that allocate Arrays (0 disables). */
+void jelly_vm_set_max_array_len(jelly_vm* vm, uint32_t max_len);
 
 /* --- list.h --- */
 typedef struct jelly_list {
