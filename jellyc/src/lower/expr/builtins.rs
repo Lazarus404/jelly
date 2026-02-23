@@ -89,6 +89,7 @@ pub(super) fn builtin_constraints(
     };
 
     match (ns, name) {
+        // System.assert(cond: Bool) -> Bool (throws if cond is false)
         ("System", "assert") => {
             no_targs("assert")?;
             if args_len != 1 {
@@ -99,34 +100,42 @@ pub(super) fn builtin_constraints(
                 ret: T_BOOL,
             }))
         }
+        // Integer.to_i8(x: Ix) -> I8
         ("Integer", "to_i8") => {
             no_targs("Integer.to_i8")?;
             Ok(Some(BuiltinConstraints { args: vec![ArgConstraint::Numeric], ret: T_I8 }))
         }
+        // Integer.to_i16(x: Ix) -> I16
         ("Integer", "to_i16") => {
             no_targs("Integer.to_i16")?;
             Ok(Some(BuiltinConstraints { args: vec![ArgConstraint::Numeric], ret: T_I16 }))
         }
+        // Integer.to_i32(x: Ix) -> I32
         ("Integer", "to_i32") => {
             no_targs("Integer.to_i32")?;
             Ok(Some(BuiltinConstraints { args: vec![ArgConstraint::Numeric], ret: T_I32 }))
         }
+        // Integer.to_i64(x: Ix) -> I64
         ("Integer", "to_i64") => {
             no_targs("Integer.to_i64")?;
             Ok(Some(BuiltinConstraints { args: vec![ArgConstraint::Numeric], ret: T_I64 }))
         }
+        // Float.to_f16(x: Fx) -> F16
         ("Float", "to_f16") => {
             no_targs("Float.to_f16")?;
             Ok(Some(BuiltinConstraints { args: vec![ArgConstraint::Numeric], ret: T_F16 }))
         }
+        // Float.to_f32(x: Fx) -> F32
         ("Float", "to_f32") => {
             no_targs("Float.to_f32")?;
             Ok(Some(BuiltinConstraints { args: vec![ArgConstraint::Numeric], ret: T_F32 }))
         }
+        // Float.to_f64(x: Fx) -> F64
         ("Float", "to_f64") => {
             no_targs("Float.to_f64")?;
             Ok(Some(BuiltinConstraints { args: vec![ArgConstraint::Numeric], ret: T_F64 }))
         }
+        // Math.sqrt(x: Fx) -> F64
         ("Math", "sqrt") => {
             no_targs("Math.sqrt")?;
             if args_len != 1 {
@@ -134,6 +143,7 @@ pub(super) fn builtin_constraints(
             }
             Ok(Some(BuiltinConstraints { args: vec![ArgConstraint::Numeric], ret: T_F64 }))
         }
+        // Bytes.new(len: I32) -> Bytes
         ("Bytes", "new") => {
             no_targs("Bytes.new")?;
             if args_len != 1 {
@@ -141,6 +151,7 @@ pub(super) fn builtin_constraints(
             }
             Ok(Some(BuiltinConstraints { args: vec![ArgConstraint::Exact(T_I32)], ret: T_BYTES }))
         }
+        // Bytes.len(bytes: Bytes) -> I32
         ("Bytes", "len") => {
             no_targs("Bytes.len")?;
             if args_len != 1 {
@@ -148,6 +159,7 @@ pub(super) fn builtin_constraints(
             }
             Ok(Some(BuiltinConstraints { args: vec![ArgConstraint::Exact(T_BYTES)], ret: T_I32 }))
         }
+        // Bytes.get_u8(bytes: Bytes, index: I32) -> I32
         ("Bytes", "get_u8") => {
             no_targs("Bytes.get_u8")?;
             if args_len != 2 {
@@ -158,6 +170,7 @@ pub(super) fn builtin_constraints(
                 ret: T_I32,
             }))
         }
+        // Bytes.set_u8(bytes: Bytes, index: I32, value: I32) -> Bytes
         ("Bytes", "set_u8") => {
             no_targs("Bytes.set_u8")?;
             if args_len != 3 {
@@ -172,6 +185,33 @@ pub(super) fn builtin_constraints(
                 ret: T_BYTES,
             }))
         }
+        // Bytes.slice(bytes: Bytes, start: I32, len: I32) -> Bytes
+        ("Bytes", "slice") => {
+            no_targs("Bytes.slice")?;
+            if args_len != 3 {
+                return Err(err(span, "Bytes.slice expects 3 args"));
+            }
+            Ok(Some(BuiltinConstraints {
+                args: vec![
+                    ArgConstraint::Exact(T_BYTES),
+                    ArgConstraint::Exact(T_I32),
+                    ArgConstraint::Exact(T_I32),
+                ],
+                ret: T_BYTES,
+            }))
+        }
+        // Bytes.eq(a: Bytes, b: Bytes) -> Bool
+        ("Bytes", "eq") => {
+            no_targs("Bytes.eq")?;
+            if args_len != 2 {
+                return Err(err(span, "Bytes.eq expects 2 args"));
+            }
+            Ok(Some(BuiltinConstraints {
+                args: vec![ArgConstraint::Exact(T_BYTES), ArgConstraint::Exact(T_BYTES)],
+                ret: T_BOOL,
+            }))
+        }
+        // Atom.intern(bytes: Bytes) -> Atom
         ("Atom", "intern") => {
             no_targs("Atom.intern")?;
             if args_len != 1 {
@@ -179,6 +219,7 @@ pub(super) fn builtin_constraints(
             }
             Ok(Some(BuiltinConstraints { args: vec![ArgConstraint::Exact(T_BYTES)], ret: T_ATOM }))
         }
+        // Object.get(obj: Object, key: Atom) -> Dynamic
         ("Object", "get") => {
             if args_len != 2 {
                 return Err(err(span, "Object.get expects 2 args"));
@@ -195,6 +236,7 @@ pub(super) fn builtin_constraints(
                 ret,
             }))
         }
+        // Object.set(obj: Object, key: Atom, value: Dynamic) -> Object
         ("Object", "set") => {
             no_targs("Object.set")?;
             if args_len != 3 {
@@ -205,6 +247,7 @@ pub(super) fn builtin_constraints(
                 ret: T_OBJECT,
             }))
         }
+        // Array.new(len: I32) -> Array<Dynamic>
         ("Array", "new") => {
             if args_len != 1 {
                 return Err(err(span, "Array.new expects 1 arg"));
@@ -236,6 +279,7 @@ pub(super) fn builtin_constraints(
             };
             Ok(Some(BuiltinConstraints { args: vec![ArgConstraint::Exact(T_I32)], ret }))
         }
+        // Array.len(array: Array<Dynamic>) -> I32
         ("Array", "len") => {
             no_targs("Array.len")?;
             if args_len != 1 {
@@ -243,6 +287,7 @@ pub(super) fn builtin_constraints(
             }
             Ok(Some(BuiltinConstraints { args: vec![ArgConstraint::Any], ret: T_I32 }))
         }
+        // Array.get(array: Array<Dynamic>, index: I32) -> Dynamic
         ("Array", "get") => {
             no_targs("Array.get")?;
             if args_len != 2 {
@@ -254,6 +299,7 @@ pub(super) fn builtin_constraints(
                 ret: T_DYNAMIC,
             }))
         }
+        // Array.set(array: Array<Dynamic>, index: I32, value: Dynamic) -> Array<Dynamic>
         ("Array", "set") => {
             no_targs("Array.set")?;
             if args_len != 3 {
@@ -264,6 +310,7 @@ pub(super) fn builtin_constraints(
                 ret: T_DYNAMIC,
             }))
         }
+        // List.nil() -> List<Dynamic>
         ("List", "nil") => {
             if args_len != 0 {
                 return Err(err(span, "List.nil expects 0 args"));
@@ -295,6 +342,7 @@ pub(super) fn builtin_constraints(
             };
             Ok(Some(BuiltinConstraints { args: vec![], ret }))
         }
+        // List.cons(head: Dynamic, tail: List<Dynamic>) -> List<Dynamic>
         ("List", "cons") => {
             if args_len != 2 {
                 return Err(err(span, "List.cons expects 2 args"));
@@ -322,6 +370,7 @@ pub(super) fn builtin_constraints(
                 ret: T_DYNAMIC,
             }))
         }
+        // List.head(list: List<Dynamic>) -> Dynamic
         ("List", "head") => {
             no_targs("List.head")?;
             if args_len != 1 {
@@ -329,6 +378,7 @@ pub(super) fn builtin_constraints(
             }
             Ok(Some(BuiltinConstraints { args: vec![ArgConstraint::Any], ret: T_DYNAMIC }))
         }
+        // List.tail(list: List<Dynamic>) -> List<Dynamic>
         ("List", "tail") => {
             no_targs("List.tail")?;
             if args_len != 1 {
@@ -336,6 +386,7 @@ pub(super) fn builtin_constraints(
             }
             Ok(Some(BuiltinConstraints { args: vec![ArgConstraint::Any], ret: T_DYNAMIC }))
         }
+        // List.is_nil(list: List<Dynamic>) -> Bool
         ("List", "is_nil") => {
             no_targs("List.is_nil")?;
             if args_len != 1 {

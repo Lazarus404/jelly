@@ -1,0 +1,12 @@
+// Nested let-bound function literal should infer its param.
+// Capture a local `x` whose type is known from a literal, so the inner inference can use it.
+let make = fn() {
+  let x = 5;
+  let add = fn(y) { return x + y; };
+  let r = add(37);
+  System.assert(r == 42);
+  "ok"
+};
+
+make()
+
