@@ -38,7 +38,7 @@ pub struct BlockId(pub u32);
 
 pub type TypeId = u32;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct IrModule {
     pub types: Vec<TypeEntry>,
     pub sigs: Vec<FunSig>,

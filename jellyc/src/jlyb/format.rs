@@ -55,7 +55,7 @@ pub const ATOM_INIT: u32 = 1;
 
 // Must match vm/src/include/jelly.h (jelly_type_kind)
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[allow(dead_code)]
 pub enum TypeKind {
     Bool = 1,
@@ -237,13 +237,13 @@ pub enum Op {
     LtF64 = 117,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct TypeEntry {
     pub kind: TypeKind,
     pub p0: u32,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct FunSig {
     pub ret_type: u32,
     pub args: Vec<u32>,

@@ -38,7 +38,16 @@ pub(crate) use expr::lower_expr;
 pub(crate) use stmt::lower_stmt;
 use crate::error::{CompileError, CompileWarning, ErrorKind};
 use crate::ir::{BlockId, IrBuilder, IrModule, IrTerminator, TypeId, VRegId};
+use crate::jlyb::{FunSig, TypeEntry};
 use crate::typectx::{TypeCtx, TypeRepr};
+
+#[derive(Clone, Debug, Default)]
+pub struct LowerTrace {
+    pub expr_types: HashMap<Span, TypeId>,
+    pub binding_types: HashMap<Span, TypeId>,
+    pub types: Vec<TypeEntry>,
+    pub sigs: Vec<FunSig>,
+}
 
 // Base program-module type IDs. Must match `TypeCtx::new_program_base()`.
 const T_BOOL: TypeId = crate::typectx::T_BOOL; // 0
@@ -87,6 +96,7 @@ pub(crate) struct LowerCtx {
     pub module_alias_exports: HashMap<String, HashMap<String, TypeId>>,
     pub module_key_to_alias: HashMap<String, String>,
     pub warnings: Vec<CompileWarning>,
+    pub trace: Option<LowerTrace>,
 }
 
 #[derive(Clone)]
@@ -185,6 +195,7 @@ pub fn lower_program_to_ir(p: &Program) -> Result<IrModule, CompileError> {
         module_alias_exports: HashMap::new(),
         module_key_to_alias: HashMap::new(),
         warnings: Vec::new(),
+        trace: None,
     };
 
     // Concrete "global object" so `this` always has a tangible binding
@@ -316,6 +327,7 @@ pub fn lower_module_init_to_ir(
         module_alias_exports,
         module_key_to_alias: key_to_alias,
         warnings: Vec::new(),
+        trace: None,
     };
 
     let param_count = 1 + import_keys.len();
@@ -372,6 +384,163 @@ pub fn lower_module_init_to_ir(
         import_keys,
         warnings: ctx.warnings,
     })
+}
+
+pub fn trace_program_types(p: &Program) -> Result<LowerTrace, CompileError> {
+    let mut b = IrBuilder::new(Some("trace:program".to_string()));
+    let mut ctx = LowerCtx {
+        type_ctx: TypeCtx::new_program_base(),
+        const_bytes: Vec::new(),
+        const_i64: Vec::new(),
+        const_f64: Vec::new(),
+        atoms: vec![b"__proto__".to_vec(), b"init".to_vec()],
+        atom_ids: HashMap::from([
+            ("__proto__".to_string(), crate::jlyb::ATOM___PROTO__),
+            ("init".to_string(), crate::jlyb::ATOM_INIT),
+        ]),
+        env_stack: vec![HashMap::new()],
+        loop_stack: Vec::new(),
+        fn_stack: Vec::new(),
+        nested_funcs: Vec::new(),
+        pending_fn_self: None,
+        user_top_level_fun_count: 1,
+        exports_obj: None,
+        module_alias_exports: HashMap::new(),
+        module_key_to_alias: HashMap::new(),
+        warnings: Vec::new(),
+        trace: Some(LowerTrace::default()),
+    };
+
+    let v_global = b.new_vreg(T_OBJECT);
+    b.emit(Span::point(0), crate::ir::IrOp::ObjNew { dst: v_global });
+    bind_local(&mut ctx, "__global", v_global, T_OBJECT);
+
+    for s in &p.stmts {
+        lower_stmt(s, &mut ctx, &mut b)?;
+    }
+    let (out, out_tid) = lower_expr(&p.expr, &mut ctx, &mut b)?;
+    if out_tid != T_BYTES {
+        return Err(CompileError::new(ErrorKind::Type, p.expr.span, "program must evaluate to bytes"));
+    }
+    b.term(IrTerminator::Ret { value: out });
+
+    let mut tr = ctx.trace.take().unwrap_or_default();
+    tr.types = ctx.type_ctx.types.clone();
+    tr.sigs = ctx.type_ctx.sigs.clone();
+    Ok(tr)
+}
+
+pub fn trace_module_init_types(
+    module_name: &str,
+    prog: &Program,
+    is_entry: bool,
+    import_exports: &HashMap<String, HashMap<String, TypeRepr>>,
+) -> Result<LowerTrace, CompileError> {
+    // Mirror `lower_module_init_to_ir`, but run only far enough to populate trace tables.
+    let mut import_keys: Vec<String> = Vec::new();
+    let mut key_to_alias: HashMap<String, String> = HashMap::new();
+    let mut hidden_i = 0u32;
+
+    for s in &prog.stmts {
+        match &s.node {
+            StmtKind::ImportModule { path, alias } => {
+                let key = path.join(".");
+                if !key_to_alias.contains_key(&key) {
+                    key_to_alias.insert(key.clone(), alias.clone());
+                    import_keys.push(key);
+                }
+            }
+            StmtKind::ImportFrom { from, .. } => {
+                let key = from.join(".");
+                if !key_to_alias.contains_key(&key) {
+                    let hid = format!("__import{}", hidden_i);
+                    hidden_i += 1;
+                    key_to_alias.insert(key.clone(), hid);
+                    import_keys.push(key);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut type_ctx = TypeCtx::new_program_base();
+    let mut module_alias_exports: HashMap<String, HashMap<String, TypeId>> = HashMap::new();
+    for key in &import_keys {
+        let alias = key_to_alias.get(key).expect("alias");
+        let ex = import_exports.get(key).ok_or_else(|| {
+            CompileError::new(
+                ErrorKind::Name,
+                Span::point(0),
+                format!("missing import interface for '{}'", key),
+            )
+        })?;
+        let mut map: HashMap<String, TypeId> = HashMap::new();
+        for (name, tr) in ex {
+            let tid = intern_type_repr(&mut type_ctx, tr, Span::point(0))?;
+            map.insert(name.clone(), tid);
+        }
+        module_alias_exports.insert(alias.clone(), map);
+    }
+
+    let mut b = IrBuilder::new(Some(format!("trace:module:{module_name}")));
+    let mut ctx = LowerCtx {
+        type_ctx,
+        const_bytes: Vec::new(),
+        const_i64: Vec::new(),
+        const_f64: Vec::new(),
+        atoms: vec![b"__proto__".to_vec(), b"init".to_vec()],
+        atom_ids: HashMap::from([
+            ("__proto__".to_string(), crate::jlyb::ATOM___PROTO__),
+            ("init".to_string(), crate::jlyb::ATOM_INIT),
+        ]),
+        env_stack: vec![HashMap::new()],
+        loop_stack: Vec::new(),
+        fn_stack: Vec::new(),
+        nested_funcs: Vec::new(),
+        pending_fn_self: None,
+        user_top_level_fun_count: 1,
+        exports_obj: Some(VRegId(0)),
+        module_alias_exports,
+        module_key_to_alias: key_to_alias,
+        warnings: Vec::new(),
+        trace: Some(LowerTrace::default()),
+    };
+
+    let param_count = 1 + import_keys.len();
+    if param_count > 255 {
+        return Err(CompileError::new(ErrorKind::Codegen, Span::point(0), "too many module imports"));
+    }
+    b.func.param_count = param_count as u8;
+
+    let exports_v = b.new_vreg(T_OBJECT);
+    bind_local(&mut ctx, "__global", exports_v, T_OBJECT);
+    for key in &import_keys {
+        let alias = ctx.module_key_to_alias.get(key).expect("alias").clone();
+        let v = b.new_vreg(T_OBJECT);
+        bind_local(&mut ctx, &alias, v, T_OBJECT);
+    }
+
+    for s in &prog.stmts {
+        lower_stmt(s, &mut ctx, &mut b)?;
+    }
+
+    if is_entry {
+        let (out, out_tid) = lower_expr(&prog.expr, &mut ctx, &mut b)?;
+        if out_tid != T_BYTES {
+            return Err(CompileError::new(ErrorKind::Type, prog.expr.span, "program must evaluate to bytes"));
+        }
+        b.term(IrTerminator::Ret { value: out });
+    } else {
+        let _ = lower_expr(&prog.expr, &mut ctx, &mut b)?;
+        let vnull = b.new_vreg(T_DYNAMIC);
+        b.emit(prog.expr.span, crate::ir::IrOp::ConstNull { dst: vnull });
+        b.term(IrTerminator::Ret { value: vnull });
+    }
+
+    let mut tr = ctx.trace.take().unwrap_or_default();
+    tr.types = ctx.type_ctx.types.clone();
+    tr.sigs = ctx.type_ctx.sigs.clone();
+    Ok(tr)
 }
 
 pub(crate) fn intern_atom(name: &str, ctx: &mut LowerCtx) -> u32 {

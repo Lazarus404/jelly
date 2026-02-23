@@ -929,6 +929,11 @@ pub fn build_program_module(p: &Program) -> Result<Module, CompileError> {
                 );
                 Ok(out)
             }
+            ExprKind::Truthy(inner) => {
+                let v = compile_expr(inner, env, ctx)?;
+                let tid = ctx.vtypes[v.v as usize];
+                compile_truthy(e.span, v, tid, ctx)
+            }
             ExprKind::Not(inner) => {
                 let v = compile_expr(inner, env, ctx)?;
                 if ctx.vtypes[v.v as usize] != T_BOOL {

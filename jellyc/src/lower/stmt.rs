@@ -71,7 +71,7 @@ fn vars_used_in_expr(e: &Expr) -> HashSet<String> {
                     walk(a, out);
                 }
             }
-            ExprKind::Not(x) | ExprKind::Neg(x) => walk(x, out),
+            ExprKind::Truthy(x) | ExprKind::Not(x) | ExprKind::Neg(x) => walk(x, out),
             ExprKind::Add(a, b)
             | ExprKind::Sub(a, b)
             | ExprKind::Mul(a, b)
@@ -318,6 +318,9 @@ pub fn lower_stmt(s: &Stmt, ctx: &mut LowerCtx, b: &mut IrBuilder) -> Result<(),
                 if v != dst {
                     b.emit(s.span, IrOp::Mov { dst, src: v });
                 }
+                if let Some(t) = ctx.trace.as_mut() {
+                    t.binding_types.insert(s.span, et);
+                }
                 if *exported {
                     let exports_obj = ctx.exports_obj.ok_or_else(|| {
                         CompileError::new(
@@ -353,6 +356,9 @@ pub fn lower_stmt(s: &Stmt, ctx: &mut LowerCtx, b: &mut IrBuilder) -> Result<(),
                 }
                 if v != dst {
                     b.emit(s.span, IrOp::Mov { dst, src: v });
+                }
+                if let Some(t) = ctx.trace.as_mut() {
+                    t.binding_types.insert(s.span, fun_tid);
                 }
                 if *exported {
                     let exports_obj = ctx.exports_obj.ok_or_else(|| {
@@ -420,6 +426,9 @@ pub fn lower_stmt(s: &Stmt, ctx: &mut LowerCtx, b: &mut IrBuilder) -> Result<(),
                     .last_mut()
                     .expect("env stack")
                     .insert(name.clone(), super::Binding { v: dst, tid });
+                if let Some(t) = ctx.trace.as_mut() {
+                    t.binding_types.insert(s.span, tid);
+                }
                 if *exported {
                     let exports_obj = ctx.exports_obj.ok_or_else(|| {
                         CompileError::new(

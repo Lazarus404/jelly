@@ -444,6 +444,10 @@ impl<'a> Infer<'a> {
                 let _ = unify(&mut self.dsu, t, ITy::Known(T_BOOL))?;
                 Ok(ITy::Known(T_BOOL))
             }
+            ExprKind::Truthy(x) => {
+                let _ = self.infer_expr(x)?;
+                Ok(ITy::Known(T_BOOL))
+            }
             ExprKind::Add(a, b) => {
                 let ta = self.infer_expr(a)?;
                 let tb = self.infer_expr(b)?;
@@ -731,6 +735,7 @@ mod tests {
             module_alias_exports: HashMap::new(),
             module_key_to_alias: HashMap::new(),
             warnings: Vec::new(),
+            trace: None,
         }
     }
 

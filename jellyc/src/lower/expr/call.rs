@@ -118,6 +118,10 @@ pub fn lower_call_expr(
                         (fun_tid, sig_id, arg_tids, ret_tid)
                     };
 
+                    if let Some(t) = ctx.trace.as_mut() {
+                        t.expr_types.insert(callee.span, fun_tid);
+                    }
+
                     // Evaluate args left-to-right with expected types when available.
                     let arg_vals: Vec<(VRegId, TypeId)> = if let Some(v) = inferred_args.take() {
                         v
@@ -202,6 +206,10 @@ pub fn lower_call_expr(
 
             let v_bound = b.new_vreg(bound_fun_tid);
             b.emit(e.span, IrOp::BindThis { dst: v_bound, func: v_unbound, this: v_obj });
+
+            if let Some(t) = ctx.trace.as_mut() {
+                t.expr_types.insert(callee.span, bound_fun_tid);
+            }
 
             // Build a contiguous vreg window holding the arguments.
             let nargs = arg_vals.len() as u8;

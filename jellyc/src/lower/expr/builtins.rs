@@ -411,6 +411,27 @@ pub(super) fn try_lower_builtin_call(
         return Ok(None);
     };
 
+    // For HIR dumping / semantic tracing: builtin call lowering often bypasses lowering
+    // the `callee` expression itself (it pattern-matches on it), so record a best-effort
+    // function type for the callee span here.
+    let cons_for_trace = if ctx.trace.is_some() {
+        builtin_constraints(callee, type_args, args.len(), expect, ctx, true, e.span)?
+    } else {
+        None
+    };
+    if let (Some(t), Some(cons)) = (ctx.trace.as_mut(), cons_for_trace) {
+        let arg_tids: Vec<TypeId> = cons
+            .args
+            .iter()
+            .map(|c| match c {
+                ArgConstraint::Exact(tid) => *tid,
+                ArgConstraint::Numeric | ArgConstraint::Any => T_DYNAMIC,
+            })
+            .collect();
+        let fun_tid = ctx.type_ctx.intern_fun_type(cons.ret, &arg_tids);
+        t.expr_types.insert(callee.span, fun_tid);
+    }
+
     // Keep lowering logic as the canonical behavioral definition.
     // Signature/constraint inference for `fn_infer` should mirror this behavior.
 

@@ -41,6 +41,7 @@ use crate::opt;
 use crate::parse;
 use crate::phi;
 use crate::resolve;
+use crate::semantic;
 use crate::templates;
 use crate::typectx::TypeRepr;
 
@@ -84,7 +85,8 @@ pub fn compile_file_ast(input: &Path) -> Result<Module, CompileError> {
     let mut prog = parse::parse_program(&src)?;
     templates::expand_templates(&mut prog)?;
     resolve::resolve_program(&prog)?;
-    jlyb::build_program_module(&prog)
+    let (hir, _info) = semantic::analyze_program(&prog)?;
+    jlyb::build_program_module(&hir.program)
 }
 
 pub fn compile_file_ir(input: &Path) -> Result<Module, CompileFailure> {
@@ -116,7 +118,14 @@ pub fn compile_file_ir(input: &Path) -> Result<Module, CompileFailure> {
                     import_exports.insert(k.clone(), nodes[di].exports.clone());
                 }
 
-                let lowered = lower::lower_module_init_to_ir(&n.key, prog, i == entry_idx, &import_exports)
+                let (hir, _info) = semantic::analyze_module_init(&n.key, prog, i == entry_idx, &import_exports).map_err(|err| {
+                    CompileFailure::Compile {
+                        err,
+                        src: src.clone(),
+                        path: Some(path.display().to_string()),
+                    }
+                })?;
+                let lowered = lower::lower_module_init_to_ir(&n.key, &hir.program, i == entry_idx, &import_exports)
                     .map_err(|err| CompileFailure::Compile {
                         err,
                         src: src.clone(),

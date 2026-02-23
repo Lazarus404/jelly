@@ -459,6 +459,19 @@ pub(super) fn lower_expr_expect(
     ctx: &mut LowerCtx,
     b: &mut IrBuilder,
 ) -> Result<(VRegId, TypeId), CompileError> {
+    let res = lower_expr_expect_impl(e, expect, ctx, b)?;
+    if let Some(t) = ctx.trace.as_mut() {
+        t.expr_types.insert(e.span, res.1);
+    }
+    Ok(res)
+}
+
+fn lower_expr_expect_impl(
+    e: &Expr,
+    expect: Option<TypeId>,
+    ctx: &mut LowerCtx,
+    b: &mut IrBuilder,
+) -> Result<(VRegId, TypeId), CompileError> {
     fn numeric_rank(t: TypeId) -> u8 {
         match t {
             T_I8 => 0,
@@ -1287,6 +1300,11 @@ pub(super) fn lower_expr_expect(
                 _ => return Err(CompileError::new(ErrorKind::Internal, e.span, "bad neg type")),
             }
             Ok((out, t))
+        }
+        ExprKind::Truthy(inner) => {
+            let (v, t) = lower_expr(inner, ctx, b)?;
+            let out = lower_truthy(e.span, v, t, ctx, b)?;
+            Ok((out, T_BOOL))
         }
         ExprKind::Not(inner) => {
             let (v, t) = lower_expr(inner, ctx, b)?;

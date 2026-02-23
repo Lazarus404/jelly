@@ -27,7 +27,7 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Span {
     pub start: usize, // byte offset (inclusive)
     pub end: usize,   // byte offset (exclusive)
@@ -135,6 +135,14 @@ pub enum ExprKind {
         body: Vec<Stmt>,
         tail: Option<Box<Expr>>,
     },
+    /// Truthiness check.
+    ///
+    /// Semantic normalization can introduce this node to encode:
+    /// - falsey = `null` or `false`
+    /// - truthy = everything else
+    ///
+    /// The parser does not produce this directly.
+    Truthy(Box<Expr>),
     Not(Box<Expr>),
     Add(Box<Expr>, Box<Expr>),
     Sub(Box<Expr>, Box<Expr>),

@@ -32,6 +32,7 @@ use std::path::PathBuf;
 mod ast;
 mod compile;
 mod error;
+mod hir;
 mod ir;
 mod ir_codegen;
 mod jlyb;
@@ -44,6 +45,7 @@ mod peephole;
 mod phi;
 mod regalloc;
 mod resolve;
+mod semantic;
 mod source;
 mod templates;
 mod token;
@@ -51,7 +53,7 @@ mod typectx;
 
 fn usage() -> ! {
     eprintln!(
-        "usage:\n  jellyc prelude --out <prelude.jlyb>\n  jellyc <input.jelly> [--out <output.jlyb>] [--backend ast|ir]"
+        "usage:\n  jellyc prelude --out <prelude.jlyb>\n  jellyc <input.jelly> [--out <output.jlyb>] [--backend ast|ir]\n  jellyc <input.jelly> --dump ast|hir|ir\n\naliases:\n  --ast == --dump ast\n  --ir  == --dump ir"
     );
     std::process::exit(2);
 }
@@ -104,6 +106,7 @@ fn main() {
     // Parse the command line arguments
     let mut out: Option<PathBuf> = None;
     let mut backend = compile::Backend::Ast;
+    let mut dump: Option<String> = None;
     while let Some(a) = args.next() {
         match a.as_str() {
             "--out" => {
@@ -118,7 +121,77 @@ fn main() {
                     _ => usage(),
                 };
             }
+            "--dump" => {
+                let d = args.next().unwrap_or_else(|| usage());
+                dump = Some(d);
+            }
+            "--ast" => dump = Some("ast".to_string()),
+            "--ir" => dump = Some("ir".to_string()),
             "--help" | "-h" => usage(),
+            _ => usage(),
+        }
+    }
+
+    if let Some(stage) = dump {
+        match stage.as_str() {
+            "ast" => {
+                // `--dump ast` is intentionally "pre-semantic": just parse this file and dump it.
+                let src = read_to_string(&input);
+                let prog = parse::parse_program(&src).unwrap_or_else(|e| {
+                    eprintln!("{}", e.render(&src, Some(&input.display().to_string())));
+                    std::process::exit(1);
+                });
+                println!("{:#?}", prog);
+                return;
+            }
+            "hir" | "ir" => {
+                // For HIR/IR dumps we use the same module-graph loading as the IR backend,
+                // so imports/exports are reflected truthfully.
+                let (nodes, entry_idx, _root_dir) = link::load_module_graph(&input).unwrap_or_else(|e| {
+                    eprintln!("{}", e.render());
+                    std::process::exit(1);
+                });
+
+                let mut key_to_index: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+                for (i, n) in nodes.iter().enumerate() {
+                    key_to_index.insert(n.key.clone(), i);
+                }
+
+                for (i, n) in nodes.iter().enumerate() {
+                    let (path, src, prog) = match &n.file {
+                        link::LoadedFile::Source { path, src, prog } => (path, src, prog),
+                        link::LoadedFile::Bytecode { .. } => continue,
+                    };
+
+                    let mut import_exports: std::collections::HashMap<String, std::collections::HashMap<String, crate::typectx::TypeRepr>> =
+                        std::collections::HashMap::new();
+                    for k in &n.import_keys {
+                        let di = *key_to_index.get(k).expect("dep in graph");
+                        import_exports.insert(k.clone(), nodes[di].exports.clone());
+                    }
+
+                    let (hir_prog, info) = semantic::analyze_module_init(&n.key, prog, i == entry_idx, &import_exports)
+                        .unwrap_or_else(|e| {
+                            eprintln!("{}", e.render(src, Some(&path.display().to_string())));
+                            std::process::exit(1);
+                        });
+
+                    if stage == "hir" {
+                        println!("-- module: {} --", n.key);
+                        print!("{}", hir::render_hir(&hir_prog, &info));
+                    } else {
+                        let lowered = lower::lower_module_init_to_ir(&n.key, &hir_prog.program, i == entry_idx, &import_exports)
+                            .unwrap_or_else(|e| {
+                                eprintln!("{}", e.render(src, Some(&path.display().to_string())));
+                                std::process::exit(1);
+                            });
+                        println!("-- module: {} --", n.key);
+                        println!("{:#?}", lowered.ir);
+                    }
+                }
+
+                return;
+            }
             _ => usage(),
         }
     }

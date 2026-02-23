@@ -427,6 +427,7 @@ impl Resolver {
                 self.outer_scopes_stack.pop();
                 Ok(())
             }
+            ExprKind::Truthy(x) => self.resolve_expr(x),
             ExprKind::Not(x) | ExprKind::Neg(x) => self.resolve_expr(x),
             ExprKind::Add(a, b)
             | ExprKind::Sub(a, b)
