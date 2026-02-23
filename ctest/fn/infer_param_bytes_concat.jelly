@@ -1,0 +1,9 @@
+let f = fn(x) {
+  // Requires inferring `x` as Bytes; IR `+` cannot accept Dynamic.
+  return x + "!";
+};
+
+let r = f("hi");
+System.assert(r == "hi!");
+"ok"
+

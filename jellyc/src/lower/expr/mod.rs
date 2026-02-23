@@ -28,6 +28,7 @@
  */
 
 mod call;
+mod builtins;
 mod control;
 mod fn_;
 pub(super) mod fn_infer;
@@ -365,6 +366,89 @@ fn lower_tuple_eq(
     Ok(out)
 }
 
+// Lower the truthiness of a value.
+fn lower_truthy(
+    span: Span,
+    v: VRegId,
+    tid: TypeId,
+    _ctx: &mut LowerCtx,
+    b: &mut IrBuilder,
+) -> Result<VRegId, CompileError> {
+    match tid {
+        T_BOOL => Ok(v),
+        T_DYNAMIC => {
+            // Truthiness for Dynamic:
+            // - null => false
+            // - bool => itself
+            // - everything else => true
+            let v_kind = b.new_vreg(T_I32);
+            b.emit(span, IrOp::Kindof { dst: v_kind, src: v });
+
+            let v0 = b.new_vreg(T_I32);
+            b.emit(span, IrOp::ConstI32 { dst: v0, imm: 0 });
+            let v_is_null = b.new_vreg(T_BOOL);
+            b.emit(span, IrOp::EqI32 { dst: v_is_null, a: v_kind, b: v0 });
+
+            let b_null = b.new_block(Some("truthy_null".to_string()));
+            let b_not_null = b.new_block(Some("truthy_not_null".to_string()));
+            let b_join = b.new_block(Some("truthy_join".to_string()));
+            b.term(IrTerminator::JmpIf {
+                cond: v_is_null,
+                then_tgt: b_null,
+                else_tgt: b_not_null,
+            });
+
+            // null -> false
+            b.set_block(b_null);
+            let v_false = b.new_vreg(T_BOOL);
+            b.emit(span, IrOp::ConstBool { dst: v_false, imm: false });
+            b.term(IrTerminator::Jmp { target: b_join });
+
+            // not-null: if kind==bool then unbox, else true
+            b.set_block(b_not_null);
+            let v1 = b.new_vreg(T_I32);
+            b.emit(span, IrOp::ConstI32 { dst: v1, imm: 1 });
+            let v_is_bool = b.new_vreg(T_BOOL);
+            b.emit(span, IrOp::EqI32 { dst: v_is_bool, a: v_kind, b: v1 });
+
+            let b_dyn_bool = b.new_block(Some("truthy_dyn_bool".to_string()));
+            let b_other = b.new_block(Some("truthy_other".to_string()));
+            b.term(IrTerminator::JmpIf {
+                cond: v_is_bool,
+                then_tgt: b_dyn_bool,
+                else_tgt: b_other,
+            });
+
+            b.set_block(b_other);
+            let v_true = b.new_vreg(T_BOOL);
+            b.emit(span, IrOp::ConstBool { dst: v_true, imm: true });
+            b.term(IrTerminator::Jmp { target: b_join });
+
+            b.set_block(b_dyn_bool);
+            let v_unboxed = b.new_vreg(T_BOOL);
+            b.emit(span, IrOp::FromDynBool { dst: v_unboxed, src: v });
+            b.term(IrTerminator::Jmp { target: b_join });
+
+            b.set_block(b_join);
+            let v_out = b.new_vreg(T_BOOL);
+            b.emit(
+                span,
+                IrOp::Phi {
+                    dst: v_out,
+                    incomings: vec![(b_null, v_false), (b_other, v_true), (b_dyn_bool, v_unboxed)],
+                },
+            );
+            Ok(v_out)
+        }
+        _ => {
+            // Non-bool, non-null types are always truthy.
+            let out = b.new_vreg(T_BOOL);
+            b.emit(span, IrOp::ConstBool { dst: out, imm: true });
+            Ok(out)
+        }
+    }
+}
+
 pub fn lower_expr(e: &Expr, ctx: &mut LowerCtx, b: &mut IrBuilder) -> Result<(VRegId, TypeId), CompileError> {
     lower_expr_expect(e, None, ctx, b)
 }
@@ -691,6 +775,52 @@ pub(super) fn lower_expr_expect(
                 }
                 Ok((out, elem_tid))
             } else {
+                // Method extraction binding (first attempt):
+                //
+                // If the surrounding context expects a function type, interpret `obj.m` as
+                // extracting a method value *bound to* `obj` (so calling it later preserves `this`).
+                //
+                // This mirrors the call-site sugar in `lower/expr/call.rs` but applies when the
+                // member is used as a first-class value.
+                if let Some(bound_fun_tid) = expect {
+                    let te = ctx
+                        .type_ctx
+                        .types
+                        .get(bound_fun_tid as usize)
+                        .ok_or_else(|| CompileError::new(ErrorKind::Internal, e.span, "bad expected type id"))?;
+                    if te.kind == crate::jlyb::TypeKind::Function {
+                        let sig_id = te.p0;
+                        let sig = ctx
+                            .type_ctx
+                            .sigs
+                            .get(sig_id as usize)
+                            .ok_or_else(|| CompileError::new(ErrorKind::Internal, e.span, "bad fun sig id"))?
+                            .clone();
+
+                        // Unbound method signature: (Object, A...) -> R
+                        let mut unbound_args: Vec<TypeId> = Vec::with_capacity(1 + sig.args.len());
+                        unbound_args.push(T_OBJECT);
+                        unbound_args.extend(sig.args.iter().copied());
+                        let unbound_sig_id = ctx.type_ctx.intern_sig(sig.ret_type, &unbound_args);
+                        let unbound_fun_tid = ctx.type_ctx.intern_fun_type(sig.ret_type, &unbound_args);
+                        let _ = unbound_sig_id; // documented by type table; call sites will use bound signature
+
+                        let v_unbound = b.new_vreg(unbound_fun_tid);
+                        b.emit(e.span, IrOp::ObjGetAtom { dst: v_unbound, obj: v_obj, atom_id });
+
+                        let v_bound = b.new_vreg(bound_fun_tid);
+                        b.emit(
+                            e.span,
+                            IrOp::BindThis {
+                                dst: v_bound,
+                                func: v_unbound,
+                                this: v_obj,
+                            },
+                        );
+                        return Ok((v_bound, bound_fun_tid));
+                    }
+                }
+
                 // Object property access always yields Dynamic (boxed); convert if expect is typed.
                 // Emit ObjGetAtom directly to typed dst when possible to avoid tmp+FromDyn* reg-alloc
                 // issues (VM's vm_store_from_boxed unboxes based on reg_types[dst]).
@@ -731,7 +861,7 @@ pub(super) fn lower_expr_expect(
         ExprKind::Index { base, index } => {
             let (vb, tb) = lower_expr(base, ctx, b)?;
             let (vi_raw, ti_raw) = lower_expr(index, ctx, b)?;
-            let (vi, ti) = match ti_raw {
+            let (vi, _ti) = match ti_raw {
                 T_I32 => (vi_raw, T_I32),
                 // Allow any integer index type (and Dynamic via unboxing), but the VM op expects I32.
                 T_I8 | T_I16 | T_I64 => (coerce_numeric(index.span, vi_raw, ti_raw, T_I32, b)?, T_I32),
@@ -1192,6 +1322,20 @@ pub(super) fn lower_expr_expect(
             } else {
                 (va, ta, vb, tb)
             };
+            // Truthiness equality: when comparing against a boolean,
+            // interpret the other side via truthy/falsey semantics.
+            if ta == T_BOOL && tb != T_BOOL {
+                let vbt = lower_truthy(e.span, vb, tb, ctx, b)?;
+                let out = b.new_vreg(T_BOOL);
+                b.emit(e.span, IrOp::Physeq { dst: out, a: va, b: vbt });
+                return Ok((out, T_BOOL));
+            }
+            if tb == T_BOOL && ta != T_BOOL {
+                let vat = lower_truthy(e.span, va, ta, ctx, b)?;
+                let out = b.new_vreg(T_BOOL);
+                b.emit(e.span, IrOp::Physeq { dst: out, a: vat, b: vb });
+                return Ok((out, T_BOOL));
+            }
             if ta != tb {
                 return Err(CompileError::new(ErrorKind::Type, e.span, "'==' expects operands of same type"));
             }

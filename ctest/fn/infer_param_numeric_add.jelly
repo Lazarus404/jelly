@@ -1,0 +1,9 @@
+let f = fn(x) {
+  // Requires inferring `x` as numeric; IR `+` cannot accept Dynamic.
+  return x + 1;
+};
+
+let r = f(41);
+System.assert(r == 42);
+"ok"
+
