@@ -42,7 +42,8 @@ use crate::error::{CompileError, ErrorKind};
 use crate::ir::TypeId;
 use crate::lower::LowerCtx;
 use crate::typectx::{
-    T_ATOM, T_BOOL, T_BYTES, T_DYNAMIC, T_F16, T_F32, T_F64, T_I16, T_I32, T_I64, T_I8,
+    T_ARRAY_BYTES, T_ARRAY_I32, T_ATOM, T_BOOL, T_BYTES, T_DYNAMIC, T_F16, T_F32, T_F64, T_I16,
+    T_I32, T_I64, T_I8, T_LIST_BYTES, T_LIST_I32, T_OBJECT,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -173,6 +174,12 @@ fn join_numeric(a: TypeId, b: TypeId) -> Option<TypeId> {
     }
 }
 
+// Unify two types.
+// Both types known, they are unified if they are the same.
+// Both types unknown, they are unified if they are the same.
+// Known and unknown respectively, the unknown type is constrained to the known type.
+// Unknown and known respectively, the known type is constrained to the unknown type.
+// Needs further consideration in the future.
 fn unify(dsu: &mut Dsu, a: ITy, b: ITy) -> Result<ITy, CompileError> {
     match (a, b) {
         (ITy::Known(x), ITy::Known(y)) => {
@@ -199,6 +206,7 @@ fn unify(dsu: &mut Dsu, a: ITy, b: ITy) -> Result<ITy, CompileError> {
     }
 }
 
+// Infer the type of a numeric binary operator.
 fn infer_numeric_bin(dsu: &mut Dsu, a: ITy, b: ITy) -> Result<ITy, CompileError> {
     // Numeric operators promote/join numeric types (widening only).
     match (a, b) {
@@ -237,6 +245,19 @@ fn infer_numeric_bin(dsu: &mut Dsu, a: ITy, b: ITy) -> Result<ITy, CompileError>
     }
 }
 
+// Get the namespace and name of a builtin function.
+fn builtin_name(callee: &Expr) -> Option<(&str, &str)> {
+    match &callee.node {
+        ExprKind::Var(n) => Some(("", n.as_str())),
+        ExprKind::Member { base, name } => match &base.node {
+            ExprKind::Var(ns) => Some((ns.as_str(), name.as_str())),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+// Infer the type of a function defined by a `let f = fn(...) { ... }` binding.
 struct Infer<'a> {
     ctx: &'a mut LowerCtx,
     self_name: &'a str,
@@ -379,10 +400,19 @@ impl<'a> Infer<'a> {
                 let _ = unify(&mut self.dsu, t, ITy::Known(T_BOOL))?;
                 Ok(ITy::Known(T_BOOL))
             }
-            ExprKind::Add(a, b)
-            | ExprKind::Sub(a, b)
-            | ExprKind::Mul(a, b)
-            | ExprKind::Div(a, b) => {
+            ExprKind::Add(a, b) => {
+                let ta = self.infer_expr(a)?;
+                let tb = self.infer_expr(b)?;
+                // `bytes + bytes -> bytes` concatenation.
+                if matches!(ta, ITy::Known(T_BYTES)) || matches!(tb, ITy::Known(T_BYTES)) {
+                    let _ = unify(&mut self.dsu, ta, ITy::Known(T_BYTES))?;
+                    let _ = unify(&mut self.dsu, tb, ITy::Known(T_BYTES))?;
+                    Ok(ITy::Known(T_BYTES))
+                } else {
+                    infer_numeric_bin(&mut self.dsu, ta, tb)
+                }
+            }
+            ExprKind::Sub(a, b) | ExprKind::Mul(a, b) | ExprKind::Div(a, b) => {
                 let ta = self.infer_expr(a)?;
                 let tb = self.infer_expr(b)?;
                 infer_numeric_bin(&mut self.dsu, ta, tb)
@@ -434,7 +464,222 @@ impl<'a> Infer<'a> {
                 self.scopes.pop();
                 Ok(t)
             }
-            ExprKind::Call { callee, args, .. } => {
+            ExprKind::Call {
+                callee,
+                type_args,
+                args,
+            } => {
+                // Builtins (best-effort inference mirroring call lowering).
+                if let Some((ns, name)) = builtin_name(callee) {
+                    match (ns, name) {
+                        ("System", "assert") => {
+                            if args.len() == 1 {
+                                let t0 = self.infer_expr(&args[0])?;
+                                let _ = unify(&mut self.dsu, t0, ITy::Known(T_BOOL))?;
+                                return Ok(ITy::Known(T_BOOL));
+                            }
+                        }
+                        ("Math", "sqrt") => {
+                            if args.len() == 1 {
+                                let t0 = self.infer_expr(&args[0])?;
+                                let _ = infer_numeric_bin(&mut self.dsu, t0, ITy::Known(T_F64))?;
+                                return Ok(ITy::Known(T_F64));
+                            }
+                        }
+                        ("Integer", "to_i8") => return self.infer_unary_numeric_cast(args, T_I8),
+                        ("Integer", "to_i16") => return self.infer_unary_numeric_cast(args, T_I16),
+                        ("Integer", "to_i32") => return self.infer_unary_numeric_cast(args, T_I32),
+                        ("Integer", "to_i64") => return self.infer_unary_numeric_cast(args, T_I64),
+                        ("Float", "to_f16") => return self.infer_unary_numeric_cast(args, T_F16),
+                        ("Float", "to_f32") => return self.infer_unary_numeric_cast(args, T_F32),
+                        ("Float", "to_f64") => return self.infer_unary_numeric_cast(args, T_F64),
+                        ("Bytes", "new") => {
+                            if args.len() == 1 {
+                                let tlen = self.infer_expr(&args[0])?;
+                                let _ = unify(&mut self.dsu, tlen, ITy::Known(T_I32))?;
+                                return Ok(ITy::Known(T_BYTES));
+                            }
+                        }
+                        ("Bytes", "len") => {
+                            if args.len() == 1 {
+                                let tb = self.infer_expr(&args[0])?;
+                                let _ = unify(&mut self.dsu, tb, ITy::Known(T_BYTES))?;
+                                return Ok(ITy::Known(T_I32));
+                            }
+                        }
+                        ("Bytes", "get_u8") => {
+                            if args.len() == 2 {
+                                let tb = self.infer_expr(&args[0])?;
+                                let ti = self.infer_expr(&args[1])?;
+                                let _ = unify(&mut self.dsu, tb, ITy::Known(T_BYTES))?;
+                                let _ = unify(&mut self.dsu, ti, ITy::Known(T_I32))?;
+                                return Ok(ITy::Known(T_I32));
+                            }
+                        }
+                        ("Bytes", "set_u8") => {
+                            if args.len() == 3 {
+                                let tb = self.infer_expr(&args[0])?;
+                                let ti = self.infer_expr(&args[1])?;
+                                let tv = self.infer_expr(&args[2])?;
+                                let _ = unify(&mut self.dsu, tb, ITy::Known(T_BYTES))?;
+                                let _ = unify(&mut self.dsu, ti, ITy::Known(T_I32))?;
+                                let _ = unify(&mut self.dsu, tv, ITy::Known(T_I32))?;
+                                return Ok(ITy::Known(T_BYTES));
+                            }
+                        }
+                        ("Atom", "intern") => {
+                            if args.len() == 1 {
+                                let ts = self.infer_expr(&args[0])?;
+                                let _ = unify(&mut self.dsu, ts, ITy::Known(T_BYTES))?;
+                                return Ok(ITy::Known(T_ATOM));
+                            }
+                        }
+                        ("Object", "get") => {
+                            if args.len() == 2 {
+                                let to = self.infer_expr(&args[0])?;
+                                let tk = self.infer_expr(&args[1])?;
+                                let _ = unify(&mut self.dsu, to, ITy::Known(T_OBJECT))?;
+                                let _ = unify(&mut self.dsu, tk, ITy::Known(T_ATOM))?;
+                                if type_args.len() == 1 {
+                                    let out = self.ctx.type_ctx.resolve_ty(&type_args[0])?;
+                                    return Ok(ITy::Known(out));
+                                }
+                                return Ok(ITy::Known(T_DYNAMIC));
+                            }
+                        }
+                        ("Object", "set") => {
+                            if args.len() == 3 {
+                                let to = self.infer_expr(&args[0])?;
+                                let tk = self.infer_expr(&args[1])?;
+                                let _ = self.infer_expr(&args[2])?;
+                                let _ = unify(&mut self.dsu, to, ITy::Known(T_OBJECT))?;
+                                let _ = unify(&mut self.dsu, tk, ITy::Known(T_ATOM))?;
+                                return Ok(ITy::Known(T_OBJECT));
+                            }
+                        }
+                        ("Array", "new") => {
+                            if args.len() == 1 {
+                                let tlen = self.infer_expr(&args[0])?;
+                                let _ = unify(&mut self.dsu, tlen, ITy::Known(T_I32))?;
+                                // If explicit type arg is present, pick concrete array type.
+                                if type_args.len() == 1 {
+                                    let elem = self.ctx.type_ctx.resolve_ty(&type_args[0])?;
+                                    let out = match elem {
+                                        T_I32 => T_ARRAY_I32,
+                                        T_BYTES => T_ARRAY_BYTES,
+                                        _ => T_DYNAMIC,
+                                    };
+                                    return Ok(ITy::Known(out));
+                                }
+                                return Ok(ITy::Known(T_DYNAMIC));
+                            }
+                        }
+                        ("Array", "get") => {
+                            if args.len() == 2 {
+                                let ta = self.infer_expr(&args[0])?;
+                                let ti = self.infer_expr(&args[1])?;
+                                let _ = unify(&mut self.dsu, ti, ITy::Known(T_I32))?;
+                                if let ITy::Known(arr_tid) = ta {
+                                    return Ok(ITy::Known(match arr_tid {
+                                        T_ARRAY_I32 => T_I32,
+                                        T_ARRAY_BYTES => T_BYTES,
+                                        _ => T_DYNAMIC,
+                                    }));
+                                }
+                                return Ok(ITy::Known(T_DYNAMIC));
+                            }
+                        }
+                        ("Array", "set") => {
+                            if args.len() == 3 {
+                                let ta = self.infer_expr(&args[0])?;
+                                let ti = self.infer_expr(&args[1])?;
+                                let tv = self.infer_expr(&args[2])?;
+                                let _ = unify(&mut self.dsu, ti, ITy::Known(T_I32))?;
+                                if let ITy::Known(arr_tid) = ta {
+                                    let want = match arr_tid {
+                                        T_ARRAY_I32 => Some(T_I32),
+                                        T_ARRAY_BYTES => Some(T_BYTES),
+                                        _ => None,
+                                    };
+                                    if let Some(w) = want {
+                                        let _ = unify(&mut self.dsu, tv, ITy::Known(w))?;
+                                    }
+                                    return Ok(ITy::Known(arr_tid));
+                                }
+                                return Ok(ITy::Known(T_DYNAMIC));
+                            }
+                        }
+                        ("Array", "len") => {
+                            if args.len() == 1 {
+                                let _ = self.infer_expr(&args[0])?;
+                                return Ok(ITy::Known(T_I32));
+                            }
+                        }
+                        ("List", "nil") => {
+                            if args.is_empty() {
+                                if type_args.len() == 1 {
+                                    let elem = self.ctx.type_ctx.resolve_ty(&type_args[0])?;
+                                    return Ok(ITy::Known(match elem {
+                                        T_I32 => T_LIST_I32,
+                                        T_BYTES => T_LIST_BYTES,
+                                        _ => T_DYNAMIC,
+                                    }));
+                                }
+                                return Ok(ITy::Known(T_DYNAMIC));
+                            }
+                        }
+                        ("List", "cons") => {
+                            if args.len() == 2 {
+                                let th = self.infer_expr(&args[0])?;
+                                let tt = self.infer_expr(&args[1])?;
+                                // If explicit type arg is present, enforce element + tail list type.
+                                if type_args.len() == 1 {
+                                    let elem = self.ctx.type_ctx.resolve_ty(&type_args[0])?;
+                                    let list_tid = match elem {
+                                        T_I32 => T_LIST_I32,
+                                        T_BYTES => T_LIST_BYTES,
+                                        _ => T_DYNAMIC,
+                                    };
+                                    if list_tid != T_DYNAMIC {
+                                        let _ = unify(&mut self.dsu, tt, ITy::Known(list_tid))?;
+                                        let _ = unify(&mut self.dsu, th, ITy::Known(elem))?;
+                                        return Ok(ITy::Known(list_tid));
+                                    }
+                                }
+                                let _ = th;
+                                let _ = tt;
+                                return Ok(ITy::Known(T_DYNAMIC));
+                            }
+                        }
+                        ("List", "head") => {
+                            if args.len() == 1 {
+                                let tl = self.infer_expr(&args[0])?;
+                                if let ITy::Known(list_tid) = tl {
+                                    return Ok(ITy::Known(match list_tid {
+                                        T_LIST_I32 => T_I32,
+                                        T_LIST_BYTES => T_BYTES,
+                                        _ => T_DYNAMIC,
+                                    }));
+                                }
+                                return Ok(ITy::Known(T_DYNAMIC));
+                            }
+                        }
+                        ("List", "tail") => {
+                            if args.len() == 1 {
+                                let tl = self.infer_expr(&args[0])?;
+                                return Ok(tl);
+                            }
+                        }
+                        ("List", "is_nil") => {
+                            if args.len() == 1 {
+                                let _ = self.infer_expr(&args[0])?;
+                                return Ok(ITy::Known(T_BOOL));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
                 // Special-case self recursion: `ack(...)`
                 if let ExprKind::Var(n) = &callee.node {
                     if n == self.self_name {
@@ -519,6 +764,15 @@ impl<'a> Infer<'a> {
         }
         Ok(ITy::Known(sig.ret_type))
     }
+
+    fn infer_unary_numeric_cast(&mut self, args: &[Expr], out: TypeId) -> Result<ITy, CompileError> {
+        if args.len() != 1 {
+            return Ok(ITy::Known(T_DYNAMIC));
+        }
+        let t0 = self.infer_expr(&args[0])?;
+        let _ = infer_numeric_bin(&mut self.dsu, t0, ITy::Known(out))?;
+        Ok(ITy::Known(out))
+    }
 }
 
 pub fn infer_fn_type_for_let(
@@ -570,7 +824,7 @@ mod tests {
     use crate::ast::{ExprKind, Span, Spanned, StmtKind};
     use crate::ir::VRegId;
     use crate::lower::{Binding, LowerCtx};
-    use crate::typectx::{T_I64, T_OBJECT};
+    use crate::typectx::{T_BYTES, T_I32, T_I64, T_OBJECT};
 
     use super::infer_fn_type_for_let;
 
@@ -637,5 +891,71 @@ mod tests {
             infer_fn_type_for_let("f", &params, &body, &None, &mut ctx).unwrap();
         assert_eq!(arg_tids, vec![T_I64]);
         assert_eq!(ret_tid, T_I64);
+    }
+
+    #[test]
+    fn infer_fn_from_bytes_len_builtin() {
+        let sp = Span::point(0);
+        let mut ctx = mk_ctx();
+        ctx.env_stack[0].insert(
+            "__global".to_string(),
+            Binding {
+                v: VRegId(0),
+                tid: T_OBJECT,
+            },
+        );
+
+        // fn(x) { return Bytes.len(x); }
+        let params = vec![("x".to_string(), None)];
+        let callee = Spanned::new(
+            ExprKind::Member {
+                base: Box::new(Spanned::new(ExprKind::Var("Bytes".to_string()), sp)),
+                name: "len".to_string(),
+            },
+            sp,
+        );
+        let call = Spanned::new(
+            ExprKind::Call {
+                callee: Box::new(callee),
+                type_args: vec![],
+                args: vec![Spanned::new(ExprKind::Var("x".to_string()), sp)],
+            },
+            sp,
+        );
+        let body = vec![Spanned::new(StmtKind::Return { expr: Some(call) }, sp)];
+
+        let (_fun_tid, arg_tids, ret_tid) =
+            infer_fn_type_for_let("f", &params, &body, &None, &mut ctx).unwrap();
+        assert_eq!(arg_tids, vec![T_BYTES]);
+        assert_eq!(ret_tid, T_I32);
+    }
+
+    #[test]
+    fn infer_fn_bytes_concat_via_plus() {
+        let sp = Span::point(0);
+        let mut ctx = mk_ctx();
+        ctx.env_stack[0].insert(
+            "__global".to_string(),
+            Binding {
+                v: VRegId(0),
+                tid: T_OBJECT,
+            },
+        );
+
+        // fn(x) { return x + "a"; }
+        let params = vec![("x".to_string(), None)];
+        let add = Spanned::new(
+            ExprKind::Add(
+                Box::new(Spanned::new(ExprKind::Var("x".to_string()), sp)),
+                Box::new(Spanned::new(ExprKind::BytesLit(b"a".to_vec()), sp)),
+            ),
+            sp,
+        );
+        let body = vec![Spanned::new(StmtKind::Return { expr: Some(add) }, sp)];
+
+        let (_fun_tid, arg_tids, ret_tid) =
+            infer_fn_type_for_let("f", &params, &body, &None, &mut ctx).unwrap();
+        assert_eq!(arg_tids, vec![T_BYTES]);
+        assert_eq!(ret_tid, T_BYTES);
     }
 }
