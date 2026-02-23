@@ -33,6 +33,7 @@ use crate::ast::{Expr, ExprKind, Stmt, StmtKind};
 use crate::error::{CompileError, ErrorKind};
 use crate::ast::Span;
 use crate::ir::{IrBuilder, IrOp, IrTerminator, TypeId, VRegId};
+use crate::typectx::{T_ARRAY_BYTES, T_ARRAY_I32, T_BYTES, T_F16, T_F32, T_F64, T_I16, T_I32, T_I64, T_I8};
 
 use super::{bind_local, intern_atom, lookup_var, resolve_opt_ty, FnCtx, LowerCtx, LoopTargets, T_BOOL, T_DYNAMIC};
 use super::expr::{coerce_numeric, is_narrowing_numeric, lower_expr, lower_expr_expect};
@@ -165,6 +166,17 @@ fn vars_used_in_stmt(s: &Stmt, out: &mut HashSet<String>) {
         }
         StmtKind::MemberAssign { base, expr, .. } => {
             vars_used_in_expr(base).into_iter().for_each(|n| {
+                out.insert(n);
+            });
+            vars_used_in_expr(expr).into_iter().for_each(|n| {
+                out.insert(n);
+            });
+        }
+        StmtKind::IndexAssign { base, index, expr } => {
+            vars_used_in_expr(base).into_iter().for_each(|n| {
+                out.insert(n);
+            });
+            vars_used_in_expr(index).into_iter().for_each(|n| {
                 out.insert(n);
             });
             vars_used_in_expr(expr).into_iter().for_each(|n| {
@@ -475,6 +487,111 @@ pub fn lower_stmt(s: &Stmt, ctx: &mut LowerCtx, b: &mut IrBuilder) -> Result<(),
             let atom_id = intern_atom(name.as_str(), ctx);
             b.emit(s.span, IrOp::ObjSetAtom { obj: v_obj, atom_id, value: v_val });
             Ok(())
+        }
+        StmtKind::IndexAssign { base, index, expr } => {
+            ensure_open_block(b);
+            let (v_base, t_base) = lower_expr(base, ctx, b)?;
+            let (v_idx_raw, t_idx_raw) = lower_expr(index, ctx, b)?;
+            let v_idx = match t_idx_raw {
+                T_I32 => v_idx_raw,
+                T_I8 | T_I16 | T_I64 => coerce_numeric(index.span, v_idx_raw, t_idx_raw, T_I32, b)?,
+                T_DYNAMIC => lower_expr_expect(index, Some(T_I32), ctx, b)?.0,
+                _ => {
+                    return Err(CompileError::new(
+                        ErrorKind::Type,
+                        index.span,
+                        "index must be an integer",
+                    ))
+                }
+            };
+            match t_base {
+                T_ARRAY_I32 => {
+                    let (v_val, t_val) = lower_expr(expr, ctx, b)?;
+                    let v_val = if t_val == T_I32 {
+                        v_val
+                    } else if super::expr::is_numeric(t_val) {
+                        let coerced = coerce_numeric(expr.span, v_val, t_val, T_I32, b).map_err(|_| {
+                            CompileError::new(
+                                ErrorKind::Type,
+                                expr.span,
+                                "Array<I32> index assignment requires numeric value",
+                            )
+                        })?;
+                        if is_narrowing_numeric(t_val, T_I32) {
+                            ctx.warnings.push(crate::error::CompileWarning::new(
+                                expr.span,
+                                format!(
+                                    "implicit narrowing conversion in array assignment from {} to {}",
+                                    super::expr::type_name(t_val),
+                                    super::expr::type_name(T_I32)
+                                ),
+                            ));
+                        }
+                        coerced
+                    } else {
+                        return Err(CompileError::new(
+                            ErrorKind::Type,
+                            expr.span,
+                            "Array<I32> index assignment requires numeric value",
+                        ));
+                    };
+                    b.emit(s.span, IrOp::ArraySet { arr: v_base, index: v_idx, value: v_val });
+                    Ok(())
+                }
+                T_ARRAY_BYTES => {
+                    let (v_val, t_val) = lower_expr(expr, ctx, b)?;
+                    if t_val != T_BYTES {
+                        return Err(CompileError::new(
+                            ErrorKind::Type,
+                            expr.span,
+                            "Array<Bytes> index assignment requires Bytes value",
+                        ));
+                    }
+                    b.emit(s.span, IrOp::ArraySet { arr: v_base, index: v_idx, value: v_val });
+                    Ok(())
+                }
+                T_BYTES => {
+                    let (v_val, t_val) = lower_expr(expr, ctx, b)?;
+                    let v_val = match t_val {
+                        T_I32 => v_val,
+                        T_I8 | T_I16 | T_I64 | T_F16 | T_F32 | T_F64 => {
+                            let coerced = coerce_numeric(expr.span, v_val, t_val, T_I32, b).map_err(|_| {
+                                CompileError::new(
+                                    ErrorKind::Type,
+                                    expr.span,
+                                    "bytes index assignment requires numeric value",
+                                )
+                            })?;
+                            if is_narrowing_numeric(t_val, T_I32) {
+                                ctx.warnings.push(crate::error::CompileWarning::new(
+                                    expr.span,
+                                    format!(
+                                        "implicit narrowing conversion in bytes assignment from {} to {}",
+                                        super::expr::type_name(t_val),
+                                        super::expr::type_name(T_I32)
+                                    ),
+                                ));
+                            }
+                            coerced
+                        }
+                        T_DYNAMIC => lower_expr_expect(expr, Some(T_I32), ctx, b)?.0,
+                        _ => {
+                            return Err(CompileError::new(
+                                ErrorKind::Type,
+                                expr.span,
+                                "bytes index assignment requires numeric value",
+                            ))
+                        }
+                    };
+                    b.emit(s.span, IrOp::BytesSetU8 { bytes: v_base, index: v_idx, value: v_val });
+                    Ok(())
+                }
+                _ => Err(CompileError::new(
+                    ErrorKind::Type,
+                    s.span,
+                    "index assignment only supported for Array<I32>, Array<Bytes>, and bytes",
+                )),
+            }
         }
         StmtKind::While { cond, body } => {
             ensure_open_block(b);

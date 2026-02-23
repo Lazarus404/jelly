@@ -321,8 +321,44 @@ pub fn build_program_module(p: &Program) -> Result<Module, CompileError> {
                 Ok(v)
             }
             ExprKind::I32Lit(x) => {
+                // Default integer literal type is I32 unless an explicit expected type narrows/widens it.
+                if expect == Some(T_I8) && *x >= -128 && *x <= 127 {
+                    let v = ctx.new_v(T_I8);
+                    let imm = (*x as i16).to_le_bytes()[0];
+                    ctx.emit(
+                        VInsn { op: Op::ConstI8Imm, a: v, b: Opnd::Z, c: Opnd::Z, imm: imm as u32 },
+                        vec![],
+                        vec![v.v],
+                    );
+                    return Ok(v);
+                }
+                if expect == Some(T_I16) && *x >= -32768 && *x <= 32767 {
+                    let v = ctx.new_v(T_I16);
+                    ctx.emit(
+                        VInsn { op: Op::ConstI32, a: v, b: Opnd::Z, c: Opnd::Z, imm: *x as u32 },
+                        vec![],
+                        vec![v.v],
+                    );
+                    return Ok(v);
+                }
+                if expect == Some(T_I64) {
+                    let idx = ctx.const_i64.len() as u32;
+                    ctx.const_i64.push(*x as i64);
+                    let v = ctx.new_v(T_I64);
+                    ctx.emit(
+                        VInsn { op: Op::ConstI64, a: v, b: Opnd::Z, c: Opnd::Z, imm: idx },
+                        vec![],
+                        vec![v.v],
+                    );
+                    return Ok(v);
+                }
+
                 let v = ctx.new_v(T_I32);
-                ctx.emit(VInsn { op: Op::ConstI32, a: v, b: Opnd::Z, c: Opnd::Z, imm: *x as u32 }, vec![], vec![v.v]);
+                ctx.emit(
+                    VInsn { op: Op::ConstI32, a: v, b: Opnd::Z, c: Opnd::Z, imm: *x as u32 },
+                    vec![],
+                    vec![v.v],
+                );
                 Ok(v)
             }
             ExprKind::I8Lit(x) => {
@@ -1689,9 +1725,43 @@ pub fn build_program_module(p: &Program) -> Result<Module, CompileError> {
             ExprKind::Index { base, index } => {
                 let v_base = compile_expr(base, env, ctx)?;
                 let v_idx = compile_expr(index, env, ctx)?;
-                if ctx.vtypes[v_idx.v as usize] != T_I32 {
-                    return Err(CompileError::new(ErrorKind::Type, index.span, "index must be i32"));
-                }
+                let v_idx = match ctx.vtypes[v_idx.v as usize] {
+                    T_I32 => v_idx,
+                    T_I8 | T_I16 => {
+                        let out = ctx.new_v(T_I32);
+                        ctx.emit(
+                            VInsn { op: Op::Mov, a: out, b: Opnd::V(v_idx.v), c: Opnd::Z, imm: 0 },
+                            vec![v_idx.v],
+                            vec![out.v],
+                        );
+                        out
+                    }
+                    T_I64 => {
+                        let out = ctx.new_v(T_I32);
+                        ctx.emit(
+                            VInsn { op: Op::I32FromI64, a: out, b: Opnd::V(v_idx.v), c: Opnd::Z, imm: 0 },
+                            vec![v_idx.v],
+                            vec![out.v],
+                        );
+                        out
+                    }
+                    T_DYNAMIC => {
+                        let out = ctx.new_v(T_I32);
+                        ctx.emit(
+                            VInsn { op: Op::FromDynI32, a: out, b: Opnd::V(v_idx.v), c: Opnd::Z, imm: 0 },
+                            vec![v_idx.v],
+                            vec![out.v],
+                        );
+                        out
+                    }
+                    _ => {
+                        return Err(CompileError::new(
+                            ErrorKind::Type,
+                            index.span,
+                            "index must be an integer",
+                        ))
+                    }
+                };
                 match ctx.vtypes[v_base.v as usize] {
                     T_ARRAY_I32 => {
                         let out = ctx.new_v(T_I32);
@@ -2303,9 +2373,43 @@ pub fn build_program_module(p: &Program) -> Result<Module, CompileError> {
                 let v_base = compile_expr(base, env, ctx)?;
                 let v_idx = compile_expr(index, env, ctx)?;
                 let v_val = compile_expr(expr, env, ctx)?;
-                if ctx.vtypes[v_idx.v as usize] != T_I32 {
-                    return Err(CompileError::new(ErrorKind::Type, index.span, "index must be i32"));
-                }
+                let v_idx = match ctx.vtypes[v_idx.v as usize] {
+                    T_I32 => v_idx,
+                    T_I8 | T_I16 => {
+                        let out = ctx.new_v(T_I32);
+                        ctx.emit(
+                            VInsn { op: Op::Mov, a: out, b: Opnd::V(v_idx.v), c: Opnd::Z, imm: 0 },
+                            vec![v_idx.v],
+                            vec![out.v],
+                        );
+                        out
+                    }
+                    T_I64 => {
+                        let out = ctx.new_v(T_I32);
+                        ctx.emit(
+                            VInsn { op: Op::I32FromI64, a: out, b: Opnd::V(v_idx.v), c: Opnd::Z, imm: 0 },
+                            vec![v_idx.v],
+                            vec![out.v],
+                        );
+                        out
+                    }
+                    T_DYNAMIC => {
+                        let out = ctx.new_v(T_I32);
+                        ctx.emit(
+                            VInsn { op: Op::FromDynI32, a: out, b: Opnd::V(v_idx.v), c: Opnd::Z, imm: 0 },
+                            vec![v_idx.v],
+                            vec![out.v],
+                        );
+                        out
+                    }
+                    _ => {
+                        return Err(CompileError::new(
+                            ErrorKind::Type,
+                            index.span,
+                            "index must be an integer",
+                        ))
+                    }
+                };
                 match ctx.vtypes[v_base.v as usize] {
                     T_ARRAY_I32 => {
                         if ctx.vtypes[v_val.v as usize] != T_I32 {
