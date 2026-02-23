@@ -35,10 +35,8 @@ use crate::ir::{IrBuilder, IrOp, TypeId, VRegId};
 
 use crate::lower::intern_atom;
 use super::{coerce_numeric, is_narrowing_numeric, lower_expr_expect, LowerCtx};
-use crate::typectx::{T_F16, T_F32, T_F64, T_I8, T_I16, T_I32, T_I64};
 use super::{
-    T_ATOM, T_BOOL, T_BYTES, T_DYNAMIC, T_OBJECT, T_ARRAY_I32, T_ARRAY_BYTES,
-    T_LIST_I32, T_LIST_BYTES,
+    T_DYNAMIC, T_OBJECT,
 };
 
 pub fn lower_call_expr(
@@ -50,562 +48,416 @@ pub fn lower_call_expr(
     ctx: &mut LowerCtx,
     b: &mut IrBuilder,
 ) -> Result<(VRegId, TypeId), CompileError> {
-        let builtin = match &callee.node {
-            ExprKind::Var(n) => Some(("".to_string(), n.clone())),
-            ExprKind::Member { base, name } => match &base.node {
-                ExprKind::Var(ns) => Some((ns.clone(), name.clone())),
-                _ => None,
-            },
-            _ => None,
-        };
+        // Builtins are handled in a shared module so inference + lowering stay consistent.
+        if let Some(out) = super::builtins::try_lower_builtin_call(e, callee, type_args, args, expect, ctx, b)? {
+            return Ok(out);
+        }
 
-        if let Some((ns, name)) = builtin {
-            let ns = ns.as_str();
-            let name = name.as_str();
-
-            // System.assert(cond: Bool) -> Bool (throws if cond is false)
-            if ns == "System" && name == "assert" {
-                if !type_args.is_empty() {
-                    return Err(CompileError::new(
-                        ErrorKind::Type,
-                        e.span,
-                        "assert does not take type arguments",
-                    ));
-                }
-                if args.len() != 1 {
-                    return Err(CompileError::new(ErrorKind::Type, e.span, "assert expects 1 arg"));
-                }
-                let (vcond, tcond) = lower_expr_expect(&args[0], Some(T_BOOL), ctx, b)?;
-                if tcond != T_BOOL {
-                    return Err(CompileError::new(ErrorKind::Type, args[0].span, "assert expects Bool"));
-                }
-                b.emit(e.span, IrOp::Assert { cond: vcond });
-                return Ok((vcond, T_BOOL));
-            }
-
-            // Numeric conversion: Integer.to_i8, Integer.to_i16, Integer.to_i32, Integer.to_i64,
-            // Float.to_f16, Float.to_f32, Float.to_f64. Accept any numeric type and convert accordingly.
-            if args.len() == 1 {
-                let target_tid = match (ns, name) {
-                    ("Integer", "to_i8") => Some(T_I8),
-                    ("Integer", "to_i16") => Some(T_I16),
-                    ("Integer", "to_i32") => Some(T_I32),
-                    ("Integer", "to_i64") => Some(T_I64),
-                    ("Float", "to_f16") => Some(T_F16),
-                    ("Float", "to_f32") => Some(T_F32),
-                    ("Float", "to_f64") => Some(T_F64),
+        // Legacy builtin lowering (now centralized in `builtins.rs`).
+        // Kept temporarily to ease review; disabled from compilation.
+        #[cfg(any())]
+        {
+            let builtin = match &callee.node {
+                ExprKind::Var(n) => Some(("".to_string(), n.clone())),
+                ExprKind::Member { base, name } => match &base.node {
+                    ExprKind::Var(ns) => Some((ns.clone(), name.clone())),
                     _ => None,
-                };
-                if let Some(tid) = target_tid {
-                    let (v, t) = lower_expr_expect(&args[0], None, ctx, b)?;
-                    if !super::is_numeric(t) {
-                        return Err(CompileError::new(
-                            ErrorKind::Type,
-                            args[0].span,
-                            "conversion expects a numeric argument",
-                        ));
+                },
+                _ => None,
+            };
+
+            if let Some((ns, name)) = builtin {
+                let ns = ns.as_str();
+                let name = name.as_str();
+                if ns == "Bytes" && name == "slice" {
+                    if args.len() != 3 {
+                        return Err(CompileError::new(ErrorKind::Type, e.span, "Bytes.slice expects 3 args"));
                     }
-                    let out = coerce_numeric(e.span, v, t, tid, b).map_err(|_| {
-                        CompileError::new(
-                            ErrorKind::Type,
-                            args[0].span,
-                            "unsupported numeric conversion",
-                        )
-                    })?;
-                    return Ok((out, tid));
-                }
-            }
-
-            // Math.sqrt(x): any numeric -> F64 (prelude builtin)
-            if ns == "Math" && name == "sqrt" {
-                if args.len() != 1 {
-                    return Err(CompileError::new(ErrorKind::Type, e.span, "Math.sqrt expects 1 arg"));
-                }
-                let (v, t) = lower_expr_expect(&args[0], None, ctx, b)?;
-                if !super::is_numeric(t) {
-                    return Err(CompileError::new(
-                        ErrorKind::Type,
-                        args[0].span,
-                        "Math.sqrt expects a numeric argument",
-                    ));
-                }
-                let v_f64 = coerce_numeric(e.span, v, t, T_F64, b).map_err(|_| {
-                    CompileError::new(
-                        ErrorKind::Type,
-                        args[0].span,
-                        "unsupported numeric conversion for Math.sqrt",
-                    )
-                })?;
-
-                let sig_args = [T_F64];
-                let sig_id = ctx.type_ctx.intern_sig(T_F64, &sig_args);
-                let fun_tid = ctx.type_ctx.intern_fun_type(T_F64, &sig_args);
-
-                let vcallee = b.new_vreg(fun_tid);
-                b.emit(
-                    e.span,
-                    IrOp::ConstFun {
-                        dst: vcallee,
-                        func_index: crate::jlyb::NATIVE_BUILTIN_MATH_SQRT,
-                    },
-                );
-
-                let arg0 = b.new_vreg(T_F64);
-                b.emit(args[0].span, IrOp::Mov { dst: arg0, src: v_f64 });
-
-                let out = b.new_vreg(T_F64);
-                b.emit(
-                    e.span,
-                    IrOp::Call {
-                        dst: out,
-                        callee: vcallee,
-                        sig_id,
-                        arg_base: arg0,
-                        nargs: 1,
-                    },
-                );
-                return Ok((out, T_F64));
-            }
-
-            // Bytes.*
-            if ns == "Bytes" && name == "new" {
-                if args.len() != 1 {
-                    return Err(CompileError::new(ErrorKind::Type, e.span, "Bytes.new expects 1 arg"));
-                }
-                let (vlen, tlen) = lower_expr_expect(&args[0], Some(T_I32), ctx, b)?;
-                if tlen != T_I32 {
-                    return Err(CompileError::new(ErrorKind::Type, args[0].span, "Bytes.new(i32)"));
-                }
-                let out = b.new_vreg(T_BYTES);
-                b.emit(e.span, IrOp::BytesNew { dst: out, len: vlen });
-                return Ok((out, T_BYTES));
-            }
-            if ns == "Bytes" && name == "len" {
-                if args.len() != 1 {
-                    return Err(CompileError::new(ErrorKind::Type, e.span, "Bytes.len expects 1 arg"));
-                }
-                let (vb, tb) = lower_expr_expect(&args[0], Some(T_BYTES), ctx, b)?;
-                if tb != T_BYTES {
-                    return Err(CompileError::new(ErrorKind::Type, e.span, "Bytes.len(bytes)"));
-                }
-                let out = b.new_vreg(T_I32);
-                b.emit(e.span, IrOp::BytesLen { dst: out, bytes: vb });
-                return Ok((out, T_I32));
-            }
-            if ns == "Bytes" && name == "get_u8" {
-                if args.len() != 2 {
-                    return Err(CompileError::new(ErrorKind::Type, e.span, "Bytes.get_u8 expects 2 args"));
-                }
-                let (vb, tb) = lower_expr_expect(&args[0], Some(T_BYTES), ctx, b)?;
-                let (vi, ti) = lower_expr_expect(&args[1], Some(T_I32), ctx, b)?;
-                if tb != T_BYTES || ti != T_I32 {
-                    return Err(CompileError::new(ErrorKind::Type, e.span, "Bytes.get_u8(bytes, i32)"));
-                }
-                let out = b.new_vreg(T_I32);
-                b.emit(e.span, IrOp::BytesGetU8 { dst: out, bytes: vb, index: vi });
-                return Ok((out, T_I32));
-            }
-            if ns == "Bytes" && name == "set_u8" {
-                if args.len() != 3 {
-                    return Err(CompileError::new(ErrorKind::Type, e.span, "Bytes.set_u8 expects 3 args"));
-                }
-                let (vb, tb) = lower_expr_expect(&args[0], Some(T_BYTES), ctx, b)?;
-                let (vi, ti) = lower_expr_expect(&args[1], Some(T_I32), ctx, b)?;
-                let (vv, tv) = lower_expr_expect(&args[2], Some(T_I32), ctx, b)?;
-                if tb != T_BYTES || ti != T_I32 || tv != T_I32 {
-                    return Err(CompileError::new(ErrorKind::Type, e.span, "Bytes.set_u8(bytes, i32, i32)"));
-                }
-                b.emit(e.span, IrOp::BytesSetU8 { bytes: vb, index: vi, value: vv });
-                return Ok((vb, T_BYTES));
-            }
-            if ns == "Bytes" && name == "slice" {
-                if args.len() != 3 {
-                    return Err(CompileError::new(ErrorKind::Type, e.span, "Bytes.slice expects 3 args"));
-                }
-                let (vb, tb) = lower_expr_expect(&args[0], Some(T_BYTES), ctx, b)?;
-                let (v_start, t_start) = lower_expr_expect(&args[1], Some(T_I32), ctx, b)?;
-                let (v_len, t_len) = lower_expr_expect(&args[2], Some(T_I32), ctx, b)?;
-                if tb != T_BYTES || t_start != T_I32 || t_len != T_I32 {
-                    return Err(CompileError::new(ErrorKind::Type, e.span, "Bytes.slice(bytes, i32, i32)"));
-                }
-
-                let sig_args = [T_BYTES, T_I32, T_I32];
-                let sig_id = ctx.type_ctx.intern_sig(T_BYTES, &sig_args);
-                let fun_tid = ctx.type_ctx.intern_fun_type(T_BYTES, &sig_args);
-
-                let vcallee = b.new_vreg(fun_tid);
-                b.emit(
-                    e.span,
-                    IrOp::ConstFun {
-                        dst: vcallee,
-                        func_index: crate::jlyb::PRELUDE_BYTES_SLICE,
-                    },
-                );
-
-                // Marshal args into a contiguous vreg window.
-                let arg0 = b.new_vreg(T_BYTES);
-                b.emit(args[0].span, IrOp::Mov { dst: arg0, src: vb });
-                let arg1 = b.new_vreg(T_I32);
-                b.emit(args[1].span, IrOp::Mov { dst: arg1, src: v_start });
-                let arg2 = b.new_vreg(T_I32);
-                b.emit(args[2].span, IrOp::Mov { dst: arg2, src: v_len });
-
-                let out = b.new_vreg(T_BYTES);
-                b.emit(
-                    e.span,
-                    IrOp::Call {
-                        dst: out,
-                        callee: vcallee,
-                        sig_id,
-                        arg_base: arg0,
-                        nargs: 3,
-                    },
-                );
-                return Ok((out, T_BYTES));
-            }
-            if ns == "Bytes" && name == "eq" {
-                if !type_args.is_empty() {
-                    return Err(CompileError::new(
-                        ErrorKind::Type,
-                        e.span,
-                        "Bytes.eq does not take type arguments",
-                    ));
-                }
-                if args.len() != 2 {
-                    return Err(CompileError::new(ErrorKind::Type, e.span, "Bytes.eq expects 2 args"));
-                }
-                let (va, ta) = lower_expr_expect(&args[0], Some(T_BYTES), ctx, b)?;
-                let (vb, tb) = lower_expr_expect(&args[1], Some(T_BYTES), ctx, b)?;
-                if ta != T_BYTES || tb != T_BYTES {
-                    return Err(CompileError::new(ErrorKind::Type, e.span, "Bytes.eq(bytes, bytes)"));
-                }
-
-                let sig_args = [T_BYTES, T_BYTES];
-                let sig_id = ctx.type_ctx.intern_sig(T_BOOL, &sig_args);
-                let fun_tid = ctx.type_ctx.intern_fun_type(T_BOOL, &sig_args);
-
-                let vcallee = b.new_vreg(fun_tid);
-                b.emit(
-                    e.span,
-                    IrOp::ConstFun {
-                        dst: vcallee,
-                        func_index: crate::jlyb::PRELUDE_BYTES_EQ,
-                    },
-                );
-
-                // Marshal args into a contiguous vreg window.
-                let arg0 = b.new_vreg(T_BYTES);
-                b.emit(args[0].span, IrOp::Mov { dst: arg0, src: va });
-                let arg1 = b.new_vreg(T_BYTES);
-                b.emit(args[1].span, IrOp::Mov { dst: arg1, src: vb });
-
-                let out = b.new_vreg(T_BOOL);
-                b.emit(
-                    e.span,
-                    IrOp::Call {
-                        dst: out,
-                        callee: vcallee,
-                        sig_id,
-                        arg_base: arg0,
-                        nargs: 2,
-                    },
-                );
-                return Ok((out, T_BOOL));
-            }
-
-            // Atom.*
-            if ns == "Atom" && name == "intern" {
-                if !type_args.is_empty() {
-                    return Err(CompileError::new(
-                        ErrorKind::Type,
-                        e.span,
-                        "Atom.intern does not take type arguments",
-                    ));
-                }
-                if args.len() != 1 {
-                    return Err(CompileError::new(ErrorKind::Type, e.span, "Atom.intern expects 1 arg"));
-                }
-                let s = match &args[0].node {
-                    ExprKind::BytesLit(b) => b,
-                    _ => {
-                        return Err(CompileError::new(
-                            ErrorKind::Type,
-                            args[0].span,
-                            "Atom.intern expects a bytes literal",
-                        ))
+                    let (vb, tb) = lower_expr_expect(&args[0], Some(T_BYTES), ctx, b)?;
+                    let (v_start, t_start) = lower_expr_expect(&args[1], Some(T_I32), ctx, b)?;
+                    let (v_len, t_len) = lower_expr_expect(&args[2], Some(T_I32), ctx, b)?;
+                    if tb != T_BYTES || t_start != T_I32 || t_len != T_I32 {
+                        return Err(CompileError::new(ErrorKind::Type, e.span, "Bytes.slice(bytes, i32, i32)"));
                     }
-                };
-                let name = std::str::from_utf8(s).map_err(|_| {
-                    CompileError::new(ErrorKind::Type, args[0].span, "Atom.intern expects UTF-8 bytes")
-                })?;
-                let atom_id = intern_atom(name, ctx);
-                let out = b.new_vreg(T_ATOM);
-                b.emit(e.span, IrOp::ConstAtom { dst: out, atom_id });
-                return Ok((out, T_ATOM));
-            }
 
-            // Object.*
-            if ns == "Object" && name == "get" {
-                if args.len() != 2 {
-                    return Err(CompileError::new(ErrorKind::Type, e.span, "Object.get expects 2 args"));
+                    let sig_args = [T_BYTES, T_I32, T_I32];
+                    let sig_id = ctx.type_ctx.intern_sig(T_BYTES, &sig_args);
+                    let fun_tid = ctx.type_ctx.intern_fun_type(T_BYTES, &sig_args);
+
+                    let vcallee = b.new_vreg(fun_tid);
+                    b.emit(
+                        e.span,
+                        IrOp::ConstFun {
+                            dst: vcallee,
+                            func_index: crate::jlyb::PRELUDE_BYTES_SLICE,
+                        },
+                    );
+
+                    // Marshal args into a contiguous vreg window.
+                    let arg0 = b.new_vreg(T_BYTES);
+                    b.emit(args[0].span, IrOp::Mov { dst: arg0, src: vb });
+                    let arg1 = b.new_vreg(T_I32);
+                    b.emit(args[1].span, IrOp::Mov { dst: arg1, src: v_start });
+                    let arg2 = b.new_vreg(T_I32);
+                    b.emit(args[2].span, IrOp::Mov { dst: arg2, src: v_len });
+
+                    let out = b.new_vreg(T_BYTES);
+                    b.emit(
+                        e.span,
+                        IrOp::Call {
+                            dst: out,
+                            callee: vcallee,
+                            sig_id,
+                            arg_base: arg0,
+                            nargs: 3,
+                        },
+                    );
+                    return Ok((out, T_BYTES));
                 }
-                let out_tid = if type_args.is_empty() {
-                    T_DYNAMIC
-                } else {
-                    if type_args.len() != 1 {
+                if ns == "Bytes" && name == "eq" {
+                    if !type_args.is_empty() {
                         return Err(CompileError::new(
                             ErrorKind::Type,
                             e.span,
-                            "Object.get<T>(obj, key): expects 1 type arg",
+                            "Bytes.eq does not take type arguments",
                         ));
                     }
-                    ctx.type_ctx.resolve_ty(&type_args[0])?
-                };
-                let (v_obj, t_obj) = lower_expr_expect(&args[0], Some(T_OBJECT), ctx, b)?;
-                if t_obj != T_OBJECT {
-                    return Err(CompileError::new(ErrorKind::Type, args[0].span, "Object.get expects Object"));
-                }
-                let (v_key, t_key) = lower_expr_expect(&args[1], Some(T_ATOM), ctx, b)?;
-                if t_key != T_ATOM {
-                    return Err(CompileError::new(ErrorKind::Type, args[1].span, "Object.get expects Atom key"));
-                }
-                let out = b.new_vreg(out_tid);
-                b.emit(e.span, IrOp::ObjGet { dst: out, obj: v_obj, atom: v_key });
-                return Ok((out, out_tid));
-            }
-            if ns == "Object" && name == "set" {
-                if !type_args.is_empty() {
-                    return Err(CompileError::new(
-                        ErrorKind::Type,
-                        e.span,
-                        "Object.set does not take type arguments",
-                    ));
-                }
-                if args.len() != 3 {
-                    return Err(CompileError::new(ErrorKind::Type, e.span, "Object.set expects 3 args"));
-                }
-                let (v_obj, t_obj) = lower_expr_expect(&args[0], Some(T_OBJECT), ctx, b)?;
-                if t_obj != T_OBJECT {
-                    return Err(CompileError::new(ErrorKind::Type, args[0].span, "Object.set expects Object"));
-                }
-                let (v_key, t_key) = lower_expr_expect(&args[1], Some(T_ATOM), ctx, b)?;
-                if t_key != T_ATOM {
-                    return Err(CompileError::new(ErrorKind::Type, args[1].span, "Object.set expects Atom key"));
-                }
-                let (v_val, _t_val) = lower_expr_expect(&args[2], None, ctx, b)?;
-                b.emit(e.span, IrOp::ObjSet { obj: v_obj, atom: v_key, value: v_val });
-                // Return the object for convenience.
-                return Ok((v_obj, T_OBJECT));
-            }
+                    if args.len() != 2 {
+                        return Err(CompileError::new(ErrorKind::Type, e.span, "Bytes.eq expects 2 args"));
+                    }
+                    let (va, ta) = lower_expr_expect(&args[0], Some(T_BYTES), ctx, b)?;
+                    let (vb, tb) = lower_expr_expect(&args[1], Some(T_BYTES), ctx, b)?;
+                    if ta != T_BYTES || tb != T_BYTES {
+                        return Err(CompileError::new(ErrorKind::Type, e.span, "Bytes.eq(bytes, bytes)"));
+                    }
 
-            // Array.*
-            if ns == "Array" && name == "new" {
-                if args.len() != 1 {
-                    return Err(CompileError::new(ErrorKind::Type, e.span, "Array.new expects 1 arg"));
+                    let sig_args = [T_BYTES, T_BYTES];
+                    let sig_id = ctx.type_ctx.intern_sig(T_BOOL, &sig_args);
+                    let fun_tid = ctx.type_ctx.intern_fun_type(T_BOOL, &sig_args);
+
+                    let vcallee = b.new_vreg(fun_tid);
+                    b.emit(
+                        e.span,
+                        IrOp::ConstFun {
+                            dst: vcallee,
+                            func_index: crate::jlyb::PRELUDE_BYTES_EQ,
+                        },
+                    );
+
+                    // Marshal args into a contiguous vreg window.
+                    let arg0 = b.new_vreg(T_BYTES);
+                    b.emit(args[0].span, IrOp::Mov { dst: arg0, src: va });
+                    let arg1 = b.new_vreg(T_BYTES);
+                    b.emit(args[1].span, IrOp::Mov { dst: arg1, src: vb });
+
+                    let out = b.new_vreg(T_BOOL);
+                    b.emit(
+                        e.span,
+                        IrOp::Call {
+                            dst: out,
+                            callee: vcallee,
+                            sig_id,
+                            arg_base: arg0,
+                            nargs: 2,
+                        },
+                    );
+                    return Ok((out, T_BOOL));
                 }
-                let (vlen, tlen) = lower_expr_expect(&args[0], Some(T_I32), ctx, b)?;
-                if tlen != T_I32 {
-                    return Err(CompileError::new(ErrorKind::Type, args[0].span, "Array.new(i32)"));
+
+                // Atom.*
+                if ns == "Atom" && name == "intern" {
+                    if !type_args.is_empty() {
+                        return Err(CompileError::new(
+                            ErrorKind::Type,
+                            e.span,
+                            "Atom.intern does not take type arguments",
+                        ));
+                    }
+                    if args.len() != 1 {
+                        return Err(CompileError::new(ErrorKind::Type, e.span, "Atom.intern expects 1 arg"));
+                    }
+                    let s = match &args[0].node {
+                        ExprKind::BytesLit(b) => b,
+                        _ => {
+                            return Err(CompileError::new(
+                                ErrorKind::Type,
+                                args[0].span,
+                                "Atom.intern expects a bytes literal",
+                            ))
+                        }
+                    };
+                    let name = std::str::from_utf8(s).map_err(|_| {
+                        CompileError::new(ErrorKind::Type, args[0].span, "Atom.intern expects UTF-8 bytes")
+                    })?;
+                    let atom_id = intern_atom(name, ctx);
+                    let out = b.new_vreg(T_ATOM);
+                    b.emit(e.span, IrOp::ConstAtom { dst: out, atom_id });
+                    return Ok((out, T_ATOM));
                 }
-                let arr_tid = if ns == "Array" {
-                    if type_args.is_empty() {
+
+                // Object.*
+                if ns == "Object" && name == "get" {
+                    if args.len() != 2 {
+                        return Err(CompileError::new(ErrorKind::Type, e.span, "Object.get expects 2 args"));
+                    }
+                    let out_tid = if type_args.is_empty() {
+                        T_DYNAMIC
+                    } else {
+                        if type_args.len() != 1 {
+                            return Err(CompileError::new(
+                                ErrorKind::Type,
+                                e.span,
+                                "Object.get<T>(obj, key): expects 1 type arg",
+                            ));
+                        }
+                        ctx.type_ctx.resolve_ty(&type_args[0])?
+                    };
+                    let (v_obj, t_obj) = lower_expr_expect(&args[0], Some(T_OBJECT), ctx, b)?;
+                    if t_obj != T_OBJECT {
+                        return Err(CompileError::new(ErrorKind::Type, args[0].span, "Object.get expects Object"));
+                    }
+                    let (v_key, t_key) = lower_expr_expect(&args[1], Some(T_ATOM), ctx, b)?;
+                    if t_key != T_ATOM {
+                        return Err(CompileError::new(ErrorKind::Type, args[1].span, "Object.get expects Atom key"));
+                    }
+                    let out = b.new_vreg(out_tid);
+                    b.emit(e.span, IrOp::ObjGet { dst: out, obj: v_obj, atom: v_key });
+                    return Ok((out, out_tid));
+                }
+                if ns == "Object" && name == "set" {
+                    if !type_args.is_empty() {
+                        return Err(CompileError::new(
+                            ErrorKind::Type,
+                            e.span,
+                            "Object.set does not take type arguments",
+                        ));
+                    }
+                    if args.len() != 3 {
+                        return Err(CompileError::new(ErrorKind::Type, e.span, "Object.set expects 3 args"));
+                    }
+                    let (v_obj, t_obj) = lower_expr_expect(&args[0], Some(T_OBJECT), ctx, b)?;
+                    if t_obj != T_OBJECT {
+                        return Err(CompileError::new(ErrorKind::Type, args[0].span, "Object.set expects Object"));
+                    }
+                    let (v_key, t_key) = lower_expr_expect(&args[1], Some(T_ATOM), ctx, b)?;
+                    if t_key != T_ATOM {
+                        return Err(CompileError::new(ErrorKind::Type, args[1].span, "Object.set expects Atom key"));
+                    }
+                    let (v_val, _t_val) = lower_expr_expect(&args[2], None, ctx, b)?;
+                    b.emit(e.span, IrOp::ObjSet { obj: v_obj, atom: v_key, value: v_val });
+                    // Return the object for convenience.
+                    return Ok((v_obj, T_OBJECT));
+                }
+
+                // Array.*
+                if ns == "Array" && name == "new" {
+                    if args.len() != 1 {
+                        return Err(CompileError::new(ErrorKind::Type, e.span, "Array.new expects 1 arg"));
+                    }
+                    let (vlen, tlen) = lower_expr_expect(&args[0], Some(T_I32), ctx, b)?;
+                    if tlen != T_I32 {
+                        return Err(CompileError::new(ErrorKind::Type, args[0].span, "Array.new(i32)"));
+                    }
+                    let arr_tid = if ns == "Array" {
+                        if type_args.is_empty() {
+                            match expect {
+                                Some(t) if t == T_ARRAY_I32 || t == T_ARRAY_BYTES => t,
+                                _ => {
+                                    return Err(CompileError::new(
+                                        ErrorKind::Type,
+                                        e.span,
+                                        "Array.new<T>(len): missing type argument",
+                                    ))
+                                }
+                            }
+                        } else if type_args.len() == 1 {
+                            let elem = ctx.type_ctx.resolve_ty(&type_args[0])?;
+                            match elem {
+                                T_I32 => T_ARRAY_I32,
+                                T_BYTES => T_ARRAY_BYTES,
+                                _ => {
+                                    return Err(CompileError::new(
+                                        ErrorKind::Type,
+                                        e.span,
+                                        "only Array<I32> and Array<Bytes> supported for now",
+                                    ))
+                                }
+                            }
+                        } else {
+                            return Err(CompileError::new(ErrorKind::Type, e.span, "Array.new expects 1 type arg"));
+                        }
+                    } else {
+                        T_ARRAY_I32
+                    };
+                    let out = b.new_vreg(arr_tid);
+                    b.emit(e.span, IrOp::ArrayNew { dst: out, len: vlen });
+                    return Ok((out, arr_tid));
+                }
+
+                if ns == "Array" && name == "len" {
+                    if args.len() != 1 {
+                        return Err(CompileError::new(ErrorKind::Type, e.span, "Array.len expects 1 arg"));
+                    }
+                    let (va, ta) = lower_expr_expect(&args[0], None, ctx, b)?;
+                    if ta != T_ARRAY_I32 && ta != T_ARRAY_BYTES {
+                        return Err(CompileError::new(ErrorKind::Type, args[0].span, "Array.len(Array<T>)"));
+                    }
+                    let out = b.new_vreg(T_I32);
+                    b.emit(e.span, IrOp::ArrayLen { dst: out, arr: va });
+                    return Ok((out, T_I32));
+                }
+                if ns == "Array" && name == "get" {
+                    if args.len() != 2 {
+                        return Err(CompileError::new(ErrorKind::Type, e.span, "Array.get expects 2 args"));
+                    }
+                    let (va, ta) = lower_expr_expect(&args[0], None, ctx, b)?;
+                    let (vi, ti) = lower_expr_expect(&args[1], Some(T_I32), ctx, b)?;
+                    if (ta != T_ARRAY_I32 && ta != T_ARRAY_BYTES) || ti != T_I32 {
+                        return Err(CompileError::new(ErrorKind::Type, e.span, "Array.get(Array<T>, i32)"));
+                    }
+                    let out_tid = if ta == T_ARRAY_I32 { T_I32 } else { T_BYTES };
+                    let out = b.new_vreg(out_tid);
+                    b.emit(e.span, IrOp::ArrayGet { dst: out, arr: va, index: vi });
+                    return Ok((out, out_tid));
+                }
+                if ns == "Array" && name == "set" {
+                    if args.len() != 3 {
+                        return Err(CompileError::new(ErrorKind::Type, e.span, "Array.set expects 3 args"));
+                    }
+                    let (va, ta) = lower_expr_expect(&args[0], None, ctx, b)?;
+                    let (vi, ti) = lower_expr_expect(&args[1], Some(T_I32), ctx, b)?;
+                    let want = if ta == T_ARRAY_I32 {
+                        T_I32
+                    } else if ta == T_ARRAY_BYTES {
+                        T_BYTES
+                    } else {
+                        return Err(CompileError::new(ErrorKind::Type, e.span, "Array.set(Array<T>, i32, T)"));
+                    };
+                    let (vv, tv) = lower_expr_expect(&args[2], Some(want), ctx, b)?;
+                    if ti != T_I32 || tv != want {
+                        return Err(CompileError::new(ErrorKind::Type, e.span, "Array.set(Array<T>, i32, T)"));
+                    }
+                    b.emit(e.span, IrOp::ArraySet { arr: va, index: vi, value: vv });
+                    return Ok((va, ta));
+                }
+
+                // List.*
+                if ns == "List" && name == "nil" {
+                    if !args.is_empty() {
+                        return Err(CompileError::new(ErrorKind::Type, e.span, "List.nil expects 0 args"));
+                    }
+                    let list_tid = if type_args.is_empty() {
                         match expect {
-                            Some(t) if t == T_ARRAY_I32 || t == T_ARRAY_BYTES => t,
+                            Some(t) if t == T_LIST_I32 || t == T_LIST_BYTES => t,
                             _ => {
                                 return Err(CompileError::new(
                                     ErrorKind::Type,
                                     e.span,
-                                    "Array.new<T>(len): missing type argument",
+                                    "List.nil<T>(): missing type argument",
                                 ))
                             }
                         }
                     } else if type_args.len() == 1 {
                         let elem = ctx.type_ctx.resolve_ty(&type_args[0])?;
                         match elem {
-                            T_I32 => T_ARRAY_I32,
-                            T_BYTES => T_ARRAY_BYTES,
+                            T_I32 => T_LIST_I32,
+                            T_BYTES => T_LIST_BYTES,
                             _ => {
                                 return Err(CompileError::new(
                                     ErrorKind::Type,
                                     e.span,
-                                    "only Array<I32> and Array<Bytes> supported for now",
+                                    "only List<I32> and List<Bytes> supported for now",
                                 ))
                             }
                         }
                     } else {
-                        return Err(CompileError::new(ErrorKind::Type, e.span, "Array.new expects 1 type arg"));
+                        return Err(CompileError::new(ErrorKind::Type, e.span, "List.nil expects 1 type arg"));
+                    };
+                    let out = b.new_vreg(list_tid);
+                    b.emit(e.span, IrOp::ListNil { dst: out });
+                    return Ok((out, list_tid));
+                }
+
+                if ns == "List" && name == "cons" {
+                    if args.len() != 2 {
+                        return Err(CompileError::new(ErrorKind::Type, e.span, "List.cons expects 2 args"));
                     }
-                } else {
-                    T_ARRAY_I32
-                };
-                let out = b.new_vreg(arr_tid);
-                b.emit(e.span, IrOp::ArrayNew { dst: out, len: vlen });
-                return Ok((out, arr_tid));
-            }
-
-            if ns == "Array" && name == "len" {
-                if args.len() != 1 {
-                    return Err(CompileError::new(ErrorKind::Type, e.span, "Array.len expects 1 arg"));
-                }
-                let (va, ta) = lower_expr_expect(&args[0], None, ctx, b)?;
-                if ta != T_ARRAY_I32 && ta != T_ARRAY_BYTES {
-                    return Err(CompileError::new(ErrorKind::Type, args[0].span, "Array.len(Array<T>)"));
-                }
-                let out = b.new_vreg(T_I32);
-                b.emit(e.span, IrOp::ArrayLen { dst: out, arr: va });
-                return Ok((out, T_I32));
-            }
-            if ns == "Array" && name == "get" {
-                if args.len() != 2 {
-                    return Err(CompileError::new(ErrorKind::Type, e.span, "Array.get expects 2 args"));
-                }
-                let (va, ta) = lower_expr_expect(&args[0], None, ctx, b)?;
-                let (vi, ti) = lower_expr_expect(&args[1], Some(T_I32), ctx, b)?;
-                if (ta != T_ARRAY_I32 && ta != T_ARRAY_BYTES) || ti != T_I32 {
-                    return Err(CompileError::new(ErrorKind::Type, e.span, "Array.get(Array<T>, i32)"));
-                }
-                let out_tid = if ta == T_ARRAY_I32 { T_I32 } else { T_BYTES };
-                let out = b.new_vreg(out_tid);
-                b.emit(e.span, IrOp::ArrayGet { dst: out, arr: va, index: vi });
-                return Ok((out, out_tid));
-            }
-            if ns == "Array" && name == "set" {
-                if args.len() != 3 {
-                    return Err(CompileError::new(ErrorKind::Type, e.span, "Array.set expects 3 args"));
-                }
-                let (va, ta) = lower_expr_expect(&args[0], None, ctx, b)?;
-                let (vi, ti) = lower_expr_expect(&args[1], Some(T_I32), ctx, b)?;
-                let want = if ta == T_ARRAY_I32 {
-                    T_I32
-                } else if ta == T_ARRAY_BYTES {
-                    T_BYTES
-                } else {
-                    return Err(CompileError::new(ErrorKind::Type, e.span, "Array.set(Array<T>, i32, T)"));
-                };
-                let (vv, tv) = lower_expr_expect(&args[2], Some(want), ctx, b)?;
-                if ti != T_I32 || tv != want {
-                    return Err(CompileError::new(ErrorKind::Type, e.span, "Array.set(Array<T>, i32, T)"));
-                }
-                b.emit(e.span, IrOp::ArraySet { arr: va, index: vi, value: vv });
-                return Ok((va, ta));
-            }
-
-            // List.*
-            if ns == "List" && name == "nil" {
-                if !args.is_empty() {
-                    return Err(CompileError::new(ErrorKind::Type, e.span, "List.nil expects 0 args"));
-                }
-                let list_tid = if type_args.is_empty() {
-                    match expect {
-                        Some(t) if t == T_LIST_I32 || t == T_LIST_BYTES => t,
-                        _ => {
-                            return Err(CompileError::new(
-                                ErrorKind::Type,
-                                e.span,
-                                "List.nil<T>(): missing type argument",
-                            ))
+                    // Determine list type from explicit type arg or expected type.
+                    let list_tid = if type_args.is_empty() {
+                        match expect {
+                            Some(t) if t == T_LIST_I32 || t == T_LIST_BYTES => t,
+                            _ => {
+                                return Err(CompileError::new(
+                                    ErrorKind::Type,
+                                    e.span,
+                                    "List.cons<T>(head, tail): missing type argument",
+                                ))
+                            }
                         }
-                    }
-                } else if type_args.len() == 1 {
-                    let elem = ctx.type_ctx.resolve_ty(&type_args[0])?;
-                    match elem {
-                        T_I32 => T_LIST_I32,
-                        T_BYTES => T_LIST_BYTES,
-                        _ => {
-                            return Err(CompileError::new(
-                                ErrorKind::Type,
-                                e.span,
-                                "only List<I32> and List<Bytes> supported for now",
-                            ))
+                    } else if type_args.len() == 1 {
+                        let elem = ctx.type_ctx.resolve_ty(&type_args[0])?;
+                        match elem {
+                            T_I32 => T_LIST_I32,
+                            T_BYTES => T_LIST_BYTES,
+                            _ => {
+                                return Err(CompileError::new(
+                                    ErrorKind::Type,
+                                    e.span,
+                                    "only List<I32> and List<Bytes> supported for now",
+                                ))
+                            }
                         }
+                    } else {
+                        return Err(CompileError::new(ErrorKind::Type, e.span, "List.cons expects 1 type arg"));
+                    };
+                    let elem_tid = super::elem_tid_for_list(list_tid).expect("list tid");
+                    let (vhead, thead) = lower_expr_expect(&args[0], Some(elem_tid), ctx, b)?;
+                    let (vtail, ttail) = lower_expr_expect(&args[1], Some(list_tid), ctx, b)?;
+                    if thead != elem_tid || ttail != list_tid {
+                        return Err(CompileError::new(ErrorKind::Type, e.span, "List.cons<T>(T, List<T>)"));
                     }
-                } else {
-                    return Err(CompileError::new(ErrorKind::Type, e.span, "List.nil expects 1 type arg"));
-                };
-                let out = b.new_vreg(list_tid);
-                b.emit(e.span, IrOp::ListNil { dst: out });
-                return Ok((out, list_tid));
-            }
-
-            if ns == "List" && name == "cons" {
-                if args.len() != 2 {
-                    return Err(CompileError::new(ErrorKind::Type, e.span, "List.cons expects 2 args"));
+                    let out = b.new_vreg(list_tid);
+                    b.emit(e.span, IrOp::ListCons { dst: out, head: vhead, tail: vtail });
+                    return Ok((out, list_tid));
                 }
-                // Determine list type from explicit type arg or expected type.
-                let list_tid = if type_args.is_empty() {
-                    match expect {
-                        Some(t) if t == T_LIST_I32 || t == T_LIST_BYTES => t,
-                        _ => {
-                            return Err(CompileError::new(
-                                ErrorKind::Type,
-                                e.span,
-                                "List.cons<T>(head, tail): missing type argument",
-                            ))
-                        }
+
+                if ns == "List" && name == "head" {
+                    if args.len() != 1 {
+                        return Err(CompileError::new(ErrorKind::Type, e.span, "List.head expects 1 arg"));
                     }
-                } else if type_args.len() == 1 {
-                    let elem = ctx.type_ctx.resolve_ty(&type_args[0])?;
-                    match elem {
-                        T_I32 => T_LIST_I32,
-                        T_BYTES => T_LIST_BYTES,
-                        _ => {
-                            return Err(CompileError::new(
-                                ErrorKind::Type,
-                                e.span,
-                                "only List<I32> and List<Bytes> supported for now",
-                            ))
-                        }
+                    let (vl, tl) = lower_expr_expect(&args[0], None, ctx, b)?;
+                    let elem_tid = super::elem_tid_for_list(tl)
+                        .ok_or_else(|| CompileError::new(ErrorKind::Type, args[0].span, "List.head(List<T>)"))?;
+                    let out = b.new_vreg(elem_tid);
+                    b.emit(e.span, IrOp::ListHead { dst: out, list: vl });
+                    return Ok((out, elem_tid));
+                }
+
+                if ns == "List" && name == "tail" {
+                    if args.len() != 1 {
+                        return Err(CompileError::new(ErrorKind::Type, e.span, "List.tail expects 1 arg"));
                     }
-                } else {
-                    return Err(CompileError::new(ErrorKind::Type, e.span, "List.cons expects 1 type arg"));
-                };
-                let elem_tid = super::elem_tid_for_list(list_tid).expect("list tid");
-                let (vhead, thead) = lower_expr_expect(&args[0], Some(elem_tid), ctx, b)?;
-                let (vtail, ttail) = lower_expr_expect(&args[1], Some(list_tid), ctx, b)?;
-                if thead != elem_tid || ttail != list_tid {
-                    return Err(CompileError::new(ErrorKind::Type, e.span, "List.cons<T>(T, List<T>)"));
+                    let (vl, tl) = lower_expr_expect(&args[0], None, ctx, b)?;
+                    if tl != T_LIST_I32 && tl != T_LIST_BYTES {
+                        return Err(CompileError::new(ErrorKind::Type, args[0].span, "List.tail(List<T>)"));
+                    }
+                    let out = b.new_vreg(tl);
+                    b.emit(e.span, IrOp::ListTail { dst: out, list: vl });
+                    return Ok((out, tl));
                 }
-                let out = b.new_vreg(list_tid);
-                b.emit(e.span, IrOp::ListCons { dst: out, head: vhead, tail: vtail });
-                return Ok((out, list_tid));
-            }
 
-            if ns == "List" && name == "head" {
-                if args.len() != 1 {
-                    return Err(CompileError::new(ErrorKind::Type, e.span, "List.head expects 1 arg"));
+                if ns == "List" && name == "is_nil" {
+                    if args.len() != 1 {
+                        return Err(CompileError::new(ErrorKind::Type, e.span, "List.is_nil expects 1 arg"));
+                    }
+                    let (vl, tl) = lower_expr_expect(&args[0], None, ctx, b)?;
+                    if tl != T_LIST_I32 && tl != T_LIST_BYTES {
+                        return Err(CompileError::new(ErrorKind::Type, args[0].span, "List.is_nil(List<T>)"));
+                    }
+                    let out = b.new_vreg(T_BOOL);
+                    b.emit(e.span, IrOp::ListIsNil { dst: out, list: vl });
+                    return Ok((out, T_BOOL));
                 }
-                let (vl, tl) = lower_expr_expect(&args[0], None, ctx, b)?;
-                let elem_tid = super::elem_tid_for_list(tl)
-                    .ok_or_else(|| CompileError::new(ErrorKind::Type, args[0].span, "List.head(List<T>)"))?;
-                let out = b.new_vreg(elem_tid);
-                b.emit(e.span, IrOp::ListHead { dst: out, list: vl });
-                return Ok((out, elem_tid));
-            }
-
-            if ns == "List" && name == "tail" {
-                if args.len() != 1 {
-                    return Err(CompileError::new(ErrorKind::Type, e.span, "List.tail expects 1 arg"));
-                }
-                let (vl, tl) = lower_expr_expect(&args[0], None, ctx, b)?;
-                if tl != T_LIST_I32 && tl != T_LIST_BYTES {
-                    return Err(CompileError::new(ErrorKind::Type, args[0].span, "List.tail(List<T>)"));
-                }
-                let out = b.new_vreg(tl);
-                b.emit(e.span, IrOp::ListTail { dst: out, list: vl });
-                return Ok((out, tl));
-            }
-
-            if ns == "List" && name == "is_nil" {
-                if args.len() != 1 {
-                    return Err(CompileError::new(ErrorKind::Type, e.span, "List.is_nil expects 1 arg"));
-                }
-                let (vl, tl) = lower_expr_expect(&args[0], None, ctx, b)?;
-                if tl != T_LIST_I32 && tl != T_LIST_BYTES {
-                    return Err(CompileError::new(ErrorKind::Type, args[0].span, "List.is_nil(List<T>)"));
-                }
-                let out = b.new_vreg(T_BOOL);
-                b.emit(e.span, IrOp::ListIsNil { dst: out, list: vl });
-                return Ok((out, T_BOOL));
             }
         }
 

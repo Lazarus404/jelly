@@ -42,8 +42,7 @@ use crate::error::{CompileError, ErrorKind};
 use crate::ir::TypeId;
 use crate::lower::LowerCtx;
 use crate::typectx::{
-    T_ARRAY_BYTES, T_ARRAY_I32, T_ATOM, T_BOOL, T_BYTES, T_DYNAMIC, T_F16, T_F32, T_F64, T_I16,
-    T_I32, T_I64, T_I8, T_LIST_BYTES, T_LIST_I32, T_OBJECT,
+    T_ATOM, T_BOOL, T_BYTES, T_DYNAMIC, T_F16, T_F32, T_F64, T_I16, T_I32, T_I64, T_I8,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -242,18 +241,6 @@ fn infer_numeric_bin(dsu: &mut Dsu, a: ITy, b: ITy) -> Result<ITy, CompileError>
             crate::ast::Span::point(0),
             "numeric operator expects numeric operands",
         )),
-    }
-}
-
-// Get the namespace and name of a builtin function.
-fn builtin_name(callee: &Expr) -> Option<(&str, &str)> {
-    match &callee.node {
-        ExprKind::Var(n) => Some(("", n.as_str())),
-        ExprKind::Member { base, name } => match &base.node {
-            ExprKind::Var(ns) => Some((ns.as_str(), name.as_str())),
-            _ => None,
-        },
-        _ => None,
     }
 }
 
@@ -469,215 +456,42 @@ impl<'a> Infer<'a> {
                 type_args,
                 args,
             } => {
-                // Builtins (best-effort inference mirroring call lowering).
-                if let Some((ns, name)) = builtin_name(callee) {
-                    match (ns, name) {
-                        ("System", "assert") => {
-                            if args.len() == 1 {
-                                let t0 = self.infer_expr(&args[0])?;
-                                let _ = unify(&mut self.dsu, t0, ITy::Known(T_BOOL))?;
-                                return Ok(ITy::Known(T_BOOL));
-                            }
-                        }
-                        ("Math", "sqrt") => {
-                            if args.len() == 1 {
-                                let t0 = self.infer_expr(&args[0])?;
-                                let _ = infer_numeric_bin(&mut self.dsu, t0, ITy::Known(T_F64))?;
-                                return Ok(ITy::Known(T_F64));
-                            }
-                        }
-                        ("Integer", "to_i8") => return self.infer_unary_numeric_cast(args, T_I8),
-                        ("Integer", "to_i16") => return self.infer_unary_numeric_cast(args, T_I16),
-                        ("Integer", "to_i32") => return self.infer_unary_numeric_cast(args, T_I32),
-                        ("Integer", "to_i64") => return self.infer_unary_numeric_cast(args, T_I64),
-                        ("Float", "to_f16") => return self.infer_unary_numeric_cast(args, T_F16),
-                        ("Float", "to_f32") => return self.infer_unary_numeric_cast(args, T_F32),
-                        ("Float", "to_f64") => return self.infer_unary_numeric_cast(args, T_F64),
-                        ("Bytes", "new") => {
-                            if args.len() == 1 {
-                                let tlen = self.infer_expr(&args[0])?;
-                                let _ = unify(&mut self.dsu, tlen, ITy::Known(T_I32))?;
-                                return Ok(ITy::Known(T_BYTES));
-                            }
-                        }
-                        ("Bytes", "len") => {
-                            if args.len() == 1 {
-                                let tb = self.infer_expr(&args[0])?;
-                                let _ = unify(&mut self.dsu, tb, ITy::Known(T_BYTES))?;
-                                return Ok(ITy::Known(T_I32));
-                            }
-                        }
-                        ("Bytes", "get_u8") => {
-                            if args.len() == 2 {
-                                let tb = self.infer_expr(&args[0])?;
-                                let ti = self.infer_expr(&args[1])?;
-                                let _ = unify(&mut self.dsu, tb, ITy::Known(T_BYTES))?;
-                                let _ = unify(&mut self.dsu, ti, ITy::Known(T_I32))?;
-                                return Ok(ITy::Known(T_I32));
-                            }
-                        }
-                        ("Bytes", "set_u8") => {
-                            if args.len() == 3 {
-                                let tb = self.infer_expr(&args[0])?;
-                                let ti = self.infer_expr(&args[1])?;
-                                let tv = self.infer_expr(&args[2])?;
-                                let _ = unify(&mut self.dsu, tb, ITy::Known(T_BYTES))?;
-                                let _ = unify(&mut self.dsu, ti, ITy::Known(T_I32))?;
-                                let _ = unify(&mut self.dsu, tv, ITy::Known(T_I32))?;
-                                return Ok(ITy::Known(T_BYTES));
-                            }
-                        }
-                        ("Atom", "intern") => {
-                            if args.len() == 1 {
-                                let ts = self.infer_expr(&args[0])?;
-                                let _ = unify(&mut self.dsu, ts, ITy::Known(T_BYTES))?;
-                                return Ok(ITy::Known(T_ATOM));
-                            }
-                        }
-                        ("Object", "get") => {
-                            if args.len() == 2 {
-                                let to = self.infer_expr(&args[0])?;
-                                let tk = self.infer_expr(&args[1])?;
-                                let _ = unify(&mut self.dsu, to, ITy::Known(T_OBJECT))?;
-                                let _ = unify(&mut self.dsu, tk, ITy::Known(T_ATOM))?;
-                                if type_args.len() == 1 {
-                                    let out = self.ctx.type_ctx.resolve_ty(&type_args[0])?;
-                                    return Ok(ITy::Known(out));
+                if let Some(cs) = super::builtins::builtin_constraints(
+                    callee,
+                    type_args,
+                    args.len(),
+                    None,
+                    self.ctx,
+                    true,
+                    e.span,
+                )? {
+                    for (i, a) in args.iter().enumerate() {
+                        let ta = self.infer_expr(a)?;
+                        match cs.args.get(i).copied().unwrap_or(super::builtins::ArgConstraint::Any) {
+                            super::builtins::ArgConstraint::Exact(tid) => {
+                                // Treat Dynamic as "no constraint" in the inference helper.
+                                if tid != T_DYNAMIC {
+                                    let _ = unify(&mut self.dsu, ta, ITy::Known(tid))?;
                                 }
-                                return Ok(ITy::Known(T_DYNAMIC));
                             }
-                        }
-                        ("Object", "set") => {
-                            if args.len() == 3 {
-                                let to = self.infer_expr(&args[0])?;
-                                let tk = self.infer_expr(&args[1])?;
-                                let _ = self.infer_expr(&args[2])?;
-                                let _ = unify(&mut self.dsu, to, ITy::Known(T_OBJECT))?;
-                                let _ = unify(&mut self.dsu, tk, ITy::Known(T_ATOM))?;
-                                return Ok(ITy::Known(T_OBJECT));
-                            }
-                        }
-                        ("Array", "new") => {
-                            if args.len() == 1 {
-                                let tlen = self.infer_expr(&args[0])?;
-                                let _ = unify(&mut self.dsu, tlen, ITy::Known(T_I32))?;
-                                // If explicit type arg is present, pick concrete array type.
-                                if type_args.len() == 1 {
-                                    let elem = self.ctx.type_ctx.resolve_ty(&type_args[0])?;
-                                    let out = match elem {
-                                        T_I32 => T_ARRAY_I32,
-                                        T_BYTES => T_ARRAY_BYTES,
-                                        _ => T_DYNAMIC,
-                                    };
-                                    return Ok(ITy::Known(out));
-                                }
-                                return Ok(ITy::Known(T_DYNAMIC));
-                            }
-                        }
-                        ("Array", "get") => {
-                            if args.len() == 2 {
-                                let ta = self.infer_expr(&args[0])?;
-                                let ti = self.infer_expr(&args[1])?;
-                                let _ = unify(&mut self.dsu, ti, ITy::Known(T_I32))?;
-                                if let ITy::Known(arr_tid) = ta {
-                                    return Ok(ITy::Known(match arr_tid {
-                                        T_ARRAY_I32 => T_I32,
-                                        T_ARRAY_BYTES => T_BYTES,
-                                        _ => T_DYNAMIC,
-                                    }));
-                                }
-                                return Ok(ITy::Known(T_DYNAMIC));
-                            }
-                        }
-                        ("Array", "set") => {
-                            if args.len() == 3 {
-                                let ta = self.infer_expr(&args[0])?;
-                                let ti = self.infer_expr(&args[1])?;
-                                let tv = self.infer_expr(&args[2])?;
-                                let _ = unify(&mut self.dsu, ti, ITy::Known(T_I32))?;
-                                if let ITy::Known(arr_tid) = ta {
-                                    let want = match arr_tid {
-                                        T_ARRAY_I32 => Some(T_I32),
-                                        T_ARRAY_BYTES => Some(T_BYTES),
-                                        _ => None,
-                                    };
-                                    if let Some(w) = want {
-                                        let _ = unify(&mut self.dsu, tv, ITy::Known(w))?;
-                                    }
-                                    return Ok(ITy::Known(arr_tid));
-                                }
-                                return Ok(ITy::Known(T_DYNAMIC));
-                            }
-                        }
-                        ("Array", "len") => {
-                            if args.len() == 1 {
-                                let _ = self.infer_expr(&args[0])?;
-                                return Ok(ITy::Known(T_I32));
-                            }
-                        }
-                        ("List", "nil") => {
-                            if args.is_empty() {
-                                if type_args.len() == 1 {
-                                    let elem = self.ctx.type_ctx.resolve_ty(&type_args[0])?;
-                                    return Ok(ITy::Known(match elem {
-                                        T_I32 => T_LIST_I32,
-                                        T_BYTES => T_LIST_BYTES,
-                                        _ => T_DYNAMIC,
-                                    }));
-                                }
-                                return Ok(ITy::Known(T_DYNAMIC));
-                            }
-                        }
-                        ("List", "cons") => {
-                            if args.len() == 2 {
-                                let th = self.infer_expr(&args[0])?;
-                                let tt = self.infer_expr(&args[1])?;
-                                // If explicit type arg is present, enforce element + tail list type.
-                                if type_args.len() == 1 {
-                                    let elem = self.ctx.type_ctx.resolve_ty(&type_args[0])?;
-                                    let list_tid = match elem {
-                                        T_I32 => T_LIST_I32,
-                                        T_BYTES => T_LIST_BYTES,
-                                        _ => T_DYNAMIC,
-                                    };
-                                    if list_tid != T_DYNAMIC {
-                                        let _ = unify(&mut self.dsu, tt, ITy::Known(list_tid))?;
-                                        let _ = unify(&mut self.dsu, th, ITy::Known(elem))?;
-                                        return Ok(ITy::Known(list_tid));
+                            super::builtins::ArgConstraint::Numeric => match ta {
+                                ITy::Known(tid) => {
+                                    if !is_numeric(tid) {
+                                        return Err(CompileError::new(
+                                            ErrorKind::Type,
+                                            e.span,
+                                            "builtin expects a numeric argument",
+                                        ));
                                     }
                                 }
-                                let _ = th;
-                                let _ = tt;
-                                return Ok(ITy::Known(T_DYNAMIC));
+                                ITy::Var(v) => self.dsu.mark_numeric(v),
+                            },
+                            super::builtins::ArgConstraint::Any => {
+                                let _ = ta;
                             }
                         }
-                        ("List", "head") => {
-                            if args.len() == 1 {
-                                let tl = self.infer_expr(&args[0])?;
-                                if let ITy::Known(list_tid) = tl {
-                                    return Ok(ITy::Known(match list_tid {
-                                        T_LIST_I32 => T_I32,
-                                        T_LIST_BYTES => T_BYTES,
-                                        _ => T_DYNAMIC,
-                                    }));
-                                }
-                                return Ok(ITy::Known(T_DYNAMIC));
-                            }
-                        }
-                        ("List", "tail") => {
-                            if args.len() == 1 {
-                                let tl = self.infer_expr(&args[0])?;
-                                return Ok(tl);
-                            }
-                        }
-                        ("List", "is_nil") => {
-                            if args.len() == 1 {
-                                let _ = self.infer_expr(&args[0])?;
-                                return Ok(ITy::Known(T_BOOL));
-                            }
-                        }
-                        _ => {}
                     }
+                    return Ok(ITy::Known(cs.ret));
                 }
 
                 // Special-case self recursion: `ack(...)`
@@ -765,14 +579,6 @@ impl<'a> Infer<'a> {
         Ok(ITy::Known(sig.ret_type))
     }
 
-    fn infer_unary_numeric_cast(&mut self, args: &[Expr], out: TypeId) -> Result<ITy, CompileError> {
-        if args.len() != 1 {
-            return Ok(ITy::Known(T_DYNAMIC));
-        }
-        let t0 = self.infer_expr(&args[0])?;
-        let _ = infer_numeric_bin(&mut self.dsu, t0, ITy::Known(out))?;
-        Ok(ITy::Known(out))
-    }
 }
 
 pub fn infer_fn_type_for_let(

@@ -28,6 +28,7 @@
  */
 
 mod call;
+mod builtins;
 mod control;
 mod fn_;
 pub(super) mod fn_infer;
