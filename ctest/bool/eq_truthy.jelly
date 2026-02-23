@@ -1,0 +1,18 @@
+// Truthiness equality with booleans:
+// everything is truthy except `null` and `false`.
+
+System.assert(1 == true);
+System.assert("hi" == true);
+System.assert({ a: 1 } == true);
+
+System.assert(null == false);
+System.assert(false == false);
+System.assert((false == true) == false);
+System.assert((null == true) == false);
+
+let x = null;
+System.assert(x == false);
+System.assert(x != true);
+
+"ok"
+

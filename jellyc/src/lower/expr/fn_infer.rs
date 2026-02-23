@@ -467,11 +467,13 @@ impl<'a> Infer<'a> {
                 let tb = self.infer_expr(b)?;
                 // Equality:
                 // - if both are numeric, allow mixed types (value-based) and join/promote
+                // - if either side is bool, allow comparing to any type (truthy/falsey semantics)
                 // - otherwise require/unify to the same type
                 let _ = match (ta, tb) {
                     (ITy::Known(x), ITy::Known(y)) if is_numeric(x) && is_numeric(y) => {
                         Ok(ITy::Known(join_numeric(x, y).expect("numeric join")))
                     }
+                    (ITy::Known(T_BOOL), _) | (_, ITy::Known(T_BOOL)) => Ok(ITy::Known(T_BOOL)),
                     (x, y) => unify(&mut self.dsu, x, y),
                 }?;
                 Ok(ITy::Known(T_BOOL))

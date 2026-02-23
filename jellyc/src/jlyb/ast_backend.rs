@@ -303,6 +303,139 @@ pub fn build_program_module(p: &Program) -> Result<Module, CompileError> {
             Ok(out)
         };
 
+        fn compile_truthy(_span: Span, v: VTmp, tid: u32, ctx: &mut CompileCtx) -> Result<VTmp, CompileError> {
+            match tid {
+                T_BOOL => Ok(v),
+                T_DYNAMIC => {
+                    // Truthiness for Dynamic:
+                    // - null => false
+                    // - bool => itself
+                    // - everything else => true
+                    let v_kind = ctx.new_v(T_I32);
+                    ctx.emit(
+                        VInsn { op: Op::Kindof, a: v_kind, b: Opnd::V(v.v), c: Opnd::Z, imm: 0 },
+                        vec![v.v],
+                        vec![v_kind.v],
+                    );
+
+                    let out = ctx.new_v(T_BOOL);
+                    ctx.allow_multi_def[out.v as usize] = true;
+
+                    // is_null = (kind == 0)
+                    let v0 = ctx.new_v(T_I32);
+                    ctx.emit(
+                        VInsn { op: Op::ConstI32, a: v0, b: Opnd::Z, c: Opnd::Z, imm: 0 },
+                        vec![],
+                        vec![v0.v],
+                    );
+                    let v_is_null = ctx.new_v(T_BOOL);
+                    ctx.emit(
+                        VInsn { op: Op::EqI32, a: v_is_null, b: Opnd::V(v_kind.v), c: Opnd::V(v0.v), imm: 0 },
+                        vec![v_kind.v, v0.v],
+                        vec![v_is_null.v],
+                    );
+
+                    // if is_null jump to null block; fallthrough is not-null.
+                    let jmp_if_null_pc = ctx.vinsns.len() as u32;
+                    ctx.emit(
+                        VInsn { op: Op::JmpIf, a: v_is_null, b: Opnd::Z, c: Opnd::Z, imm: 0 },
+                        vec![v_is_null.v],
+                        vec![],
+                    );
+
+                    let v1 = ctx.new_v(T_I32);
+                    ctx.emit(
+                        VInsn { op: Op::ConstI32, a: v1, b: Opnd::Z, c: Opnd::Z, imm: 1 },
+                        vec![],
+                        vec![v1.v],
+                    );
+                    let v_is_bool = ctx.new_v(T_BOOL);
+                    ctx.emit(
+                        VInsn { op: Op::EqI32, a: v_is_bool, b: Opnd::V(v_kind.v), c: Opnd::V(v1.v), imm: 0 },
+                        vec![v_kind.v, v1.v],
+                        vec![v_is_bool.v],
+                    );
+
+                    // if is_bool jump to bool block; fallthrough is "other" (truthy).
+                    let jmp_if_bool_pc = ctx.vinsns.len() as u32;
+                    ctx.emit(
+                        VInsn { op: Op::JmpIf, a: v_is_bool, b: Opnd::Z, c: Opnd::Z, imm: 0 },
+                        vec![v_is_bool.v],
+                        vec![],
+                    );
+
+                    // other path: out=true; jmp join
+                    let v_true = ctx.new_v(T_BOOL);
+                    ctx.emit(
+                        VInsn { op: Op::ConstBool, a: v_true, b: Opnd::Z, c: Opnd::Z, imm: 1 },
+                        vec![],
+                        vec![v_true.v],
+                    );
+                    ctx.emit(
+                        VInsn { op: Op::Mov, a: out, b: Opnd::V(v_true.v), c: Opnd::Z, imm: 0 },
+                        vec![v_true.v],
+                        vec![out.v],
+                    );
+                    let jmp_to_join_from_other_pc = ctx.vinsns.len() as u32;
+                    ctx.emit(VInsn { op: Op::Jmp, a: out, b: Opnd::Z, c: Opnd::Z, imm: 0 }, vec![], vec![]);
+
+                    // bool path starts here (patched from second jmp_if)
+                    let bool_pc = ctx.vinsns.len() as u32;
+                    let v_unboxed = ctx.new_v(T_BOOL);
+                    ctx.emit(
+                        VInsn { op: Op::FromDynBool, a: v_unboxed, b: Opnd::V(v.v), c: Opnd::Z, imm: 0 },
+                        vec![v.v],
+                        vec![v_unboxed.v],
+                    );
+                    ctx.emit(
+                        VInsn { op: Op::Mov, a: out, b: Opnd::V(v_unboxed.v), c: Opnd::Z, imm: 0 },
+                        vec![v_unboxed.v],
+                        vec![out.v],
+                    );
+                    let jmp_to_join_from_bool_pc = ctx.vinsns.len() as u32;
+                    ctx.emit(VInsn { op: Op::Jmp, a: out, b: Opnd::Z, c: Opnd::Z, imm: 0 }, vec![], vec![]);
+
+                    // null block (patched from first jmp_if): out=false; fallthrough to join
+                    let null_pc = ctx.vinsns.len() as u32;
+                    let v_false = ctx.new_v(T_BOOL);
+                    ctx.emit(
+                        VInsn { op: Op::ConstBool, a: v_false, b: Opnd::Z, c: Opnd::Z, imm: 0 },
+                        vec![],
+                        vec![v_false.v],
+                    );
+                    ctx.emit(
+                        VInsn { op: Op::Mov, a: out, b: Opnd::V(v_false.v), c: Opnd::Z, imm: 0 },
+                        vec![v_false.v],
+                        vec![out.v],
+                    );
+                    let join_pc = ctx.vinsns.len() as u32;
+
+                    // Patch jumps.
+                    let delta_to_null: i32 = (null_pc as i32) - ((jmp_if_null_pc + 1) as i32);
+                    ctx.vinsns[jmp_if_null_pc as usize].imm = delta_to_null as u32;
+
+                    let delta_to_bool: i32 = (bool_pc as i32) - ((jmp_if_bool_pc + 1) as i32);
+                    ctx.vinsns[jmp_if_bool_pc as usize].imm = delta_to_bool as u32;
+
+                    let delta_to_join_from_other: i32 = (join_pc as i32) - ((jmp_to_join_from_other_pc + 1) as i32);
+                    ctx.vinsns[jmp_to_join_from_other_pc as usize].imm = delta_to_join_from_other as u32;
+                    let delta_to_join_from_bool: i32 = (join_pc as i32) - ((jmp_to_join_from_bool_pc + 1) as i32);
+                    ctx.vinsns[jmp_to_join_from_bool_pc as usize].imm = delta_to_join_from_bool as u32;
+
+                    Ok(out)
+                }
+                _ => {
+                    let out = ctx.new_v(T_BOOL);
+                    ctx.emit(
+                        VInsn { op: Op::ConstBool, a: out, b: Opnd::Z, c: Opnd::Z, imm: 1 },
+                        vec![],
+                        vec![out.v],
+                    );
+                    Ok(out)
+                }
+            }
+        }
+
         match &e.node {
             ExprKind::BytesLit(b) => {
                 let idx = ctx.const_bytes.len() as u32;
@@ -1108,6 +1241,28 @@ pub fn build_program_module(p: &Program) -> Result<Module, CompileError> {
                     (va, vb, ta0)
                 };
                 let tb = ctx.vtypes[vb.v as usize];
+                // Truthiness equality: when comparing against a boolean,
+                // interpret the other side via truthy/falsey semantics.
+                if ta == T_BOOL && tb != T_BOOL {
+                    let vbt = compile_truthy(e.span, vb, tb, ctx)?;
+                    let out = ctx.new_v(T_BOOL);
+                    ctx.emit(
+                        VInsn { op: Op::Physeq, a: out, b: Opnd::V(va.v), c: Opnd::V(vbt.v), imm: 0 },
+                        vec![va.v, vbt.v],
+                        vec![out.v],
+                    );
+                    return Ok(out);
+                }
+                if tb == T_BOOL && ta != T_BOOL {
+                    let vat = compile_truthy(e.span, va, ta, ctx)?;
+                    let out = ctx.new_v(T_BOOL);
+                    ctx.emit(
+                        VInsn { op: Op::Physeq, a: out, b: Opnd::V(vat.v), c: Opnd::V(vb.v), imm: 0 },
+                        vec![vat.v, vb.v],
+                        vec![out.v],
+                    );
+                    return Ok(out);
+                }
                 if ta != tb {
                     return Err(CompileError::new(ErrorKind::Type, e.span, "'==' expects operands of same type"));
                 }
@@ -1187,89 +1342,12 @@ pub fn build_program_module(p: &Program) -> Result<Module, CompileError> {
                 }
             }
             ExprKind::Ne(a, b) => {
-                let va = compile_expr(a, env, ctx)?;
-                let vb = compile_expr(b, env, ctx)?;
-                let ta0 = ctx.vtypes[va.v as usize];
-                let tb0 = ctx.vtypes[vb.v as usize];
-                let (va, vb, ta) = if ta0 != tb0 && is_numeric(ta0) && is_numeric(tb0) {
-                    let out_t = if numeric_rank(ta0) >= numeric_rank(tb0) { ta0 } else { tb0 };
-                    let va2 = coerce_numeric(e.span, va, ta0, out_t, ctx)?;
-                    let vb2 = coerce_numeric(e.span, vb, tb0, out_t, ctx)?;
-                    (va2, vb2, out_t)
-                } else {
-                    (va, vb, ta0)
-                };
-                let tb = ctx.vtypes[vb.v as usize];
-                if ta != tb {
-                    return Err(CompileError::new(ErrorKind::Type, e.span, "'!=' expects operands of same type"));
-                }
-                let t = ctx.new_v(T_BOOL);
-                match ta {
-                    T_BYTES => {
-                        // bytes inequality uses structural bytes equality + not
-                        let sig_args = vec![T_BYTES, T_BYTES]; // (bytes, bytes)
-                        let fun_tid = ctx.type_ctx.intern_fun_type(T_BOOL, &sig_args); // -> bool
-                        let sig_id = ctx.type_ctx.intern_sig(T_BOOL, &sig_args);
-
-                        let vcallee = ctx.new_v(fun_tid);
-                        ctx.emit(
-                            VInsn { op: Op::ConstFun, a: vcallee, b: Opnd::Z, c: Opnd::Z, imm: PRELUDE_BYTES_EQ },
-                            vec![],
-                            vec![vcallee.v],
-                        );
-
-                        let pc = ctx.vinsns.len() as u32;
-                        ctx.call_sites.push(CallSite { pc, sig_id, args: vec![va.v, vb.v] });
-                        ctx.emit(
-                            VInsn { op: Op::CallR, a: t, b: Opnd::V(vcallee.v), c: Opnd::Z, imm: 2 },
-                            vec![vcallee.v, va.v, vb.v],
-                            vec![t.v],
-                        );
-                    }
-                    T_BOOL => {
-                        ctx.emit(
-                            VInsn { op: Op::Physeq, a: t, b: Opnd::V(va.v), c: Opnd::V(vb.v), imm: 0 },
-                            vec![va.v, vb.v],
-                            vec![t.v],
-                        );
-                    }
-                    T_ATOM => {
-                        ctx.emit(
-                            VInsn { op: Op::Physeq, a: t, b: Opnd::V(va.v), c: Opnd::V(vb.v), imm: 0 },
-                            vec![va.v, vb.v],
-                            vec![t.v],
-                        );
-                    }
-                    T_I32 => {
-                        ctx.emit(
-                            VInsn { op: Op::EqI32, a: t, b: Opnd::V(va.v), c: Opnd::V(vb.v), imm: 0 },
-                            vec![va.v, vb.v],
-                            vec![t.v],
-                        );
-                    }
-                    T_I64 => {
-                        ctx.emit(
-                            VInsn { op: Op::EqI64, a: t, b: Opnd::V(va.v), c: Opnd::V(vb.v), imm: 0 },
-                            vec![va.v, vb.v],
-                            vec![t.v],
-                        );
-                    }
-                    T_F32 => {
-                        ctx.emit(
-                            VInsn { op: Op::EqF32, a: t, b: Opnd::V(va.v), c: Opnd::V(vb.v), imm: 0 },
-                            vec![va.v, vb.v],
-                            vec![t.v],
-                        );
-                    }
-                    T_F64 => {
-                        ctx.emit(
-                            VInsn { op: Op::EqF64, a: t, b: Opnd::V(va.v), c: Opnd::V(vb.v), imm: 0 },
-                            vec![va.v, vb.v],
-                            vec![t.v],
-                        );
-                    }
-                    _ => return Err(CompileError::new(ErrorKind::Type, e.span, "'!=' not supported for this type yet")),
-                }
+                // a != b  ==  !(a == b)
+                let t = compile_expr(
+                    &crate::ast::Spanned::new(ExprKind::Eq(a.clone(), b.clone()), e.span),
+                    env,
+                    ctx,
+                )?;
                 let out = ctx.new_v(T_BOOL);
                 ctx.emit(
                     VInsn { op: Op::NotBool, a: out, b: Opnd::V(t.v), c: Opnd::Z, imm: 0 },
