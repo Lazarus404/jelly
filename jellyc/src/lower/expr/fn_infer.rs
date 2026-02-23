@@ -524,7 +524,7 @@ impl<'a> Infer<'a> {
                     type_args,
                     args.len(),
                     None,
-                    self.ctx,
+                    &mut self.ctx.type_ctx,
                     true,
                     e.span,
                 )? {
@@ -734,8 +734,8 @@ mod tests {
             exports_obj: None,
             module_alias_exports: HashMap::new(),
             module_key_to_alias: HashMap::new(),
+            sem_binding_types: HashMap::new(),
             warnings: Vec::new(),
-            trace: None,
         }
     }
 

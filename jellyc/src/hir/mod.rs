@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::ast::{Expr, ExprKind, MatchArm, Program, Span, Stmt, StmtKind};
 use crate::ir::TypeId;
-use crate::jlyb::{FunSig, TypeEntry, TypeKind};
+use crate::typectx::TypeCtx;
 use crate::typectx::{
     T_ARRAY_BYTES, T_ARRAY_I32, T_ATOM, T_BOOL, T_BYTES, T_DYNAMIC, T_F16, T_F32, T_F64, T_I16, T_I32, T_I64, T_I8,
     T_LIST_BYTES, T_LIST_I32, T_OBJECT,
@@ -18,12 +18,12 @@ pub struct HirProgram {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct NodeId(pub Span);
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct SemanticInfo {
     pub expr_types: HashMap<NodeId, TypeId>,
     pub binding_types: HashMap<NodeId, TypeId>,
     pub captures: HashMap<NodeId, Vec<Capture>>,
-    pub type_tables: Option<TypeTables>,
+    pub type_ctx: TypeCtx,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -32,50 +32,52 @@ pub struct Capture {
     pub tid: TypeId,
 }
 
-#[derive(Clone, Debug)]
-pub struct TypeTables {
-    pub types: Vec<TypeEntry>,
-    pub sigs: Vec<FunSig>,
+impl Default for SemanticInfo {
+    fn default() -> Self {
+        Self {
+            expr_types: HashMap::new(),
+            binding_types: HashMap::new(),
+            captures: HashMap::new(),
+            type_ctx: TypeCtx::new_program_base(),
+        }
+    }
 }
 
-pub fn type_name(tid: TypeId, tables: Option<&TypeTables>) -> String {
-    if let Some(tt) = tables {
-        if let Some(te) = tt.types.get(tid as usize) {
-            match te.kind {
-                TypeKind::Function => {
-                    let sig = tt.sigs.get(te.p0 as usize);
-                    if let Some(sig) = sig {
-                        let mut out = "(".to_string();
+pub fn type_name(tid: TypeId, tc: &TypeCtx) -> String {
+    if let Some(te) = tc.types.get(tid as usize) {
+        match te.kind {
+            crate::jlyb::TypeKind::Function => {
+                if let Some(sig) = tc.sigs.get(te.p0 as usize) {
+                    let mut out = "(".to_string();
+                    for (i, a) in sig.args.iter().enumerate() {
+                        if i != 0 {
+                            out.push_str(", ");
+                        }
+                        out.push_str(&type_name(*a, tc));
+                    }
+                    out.push_str(") -> ");
+                    out.push_str(&type_name(sig.ret_type, tc));
+                    return out;
+                }
+            }
+            crate::jlyb::TypeKind::Object => {
+                const TUPLE_TAG: u32 = 0x8000_0000;
+                if (te.p0 & TUPLE_TAG) != 0 {
+                    let sig_id = te.p0 & !TUPLE_TAG;
+                    if let Some(sig) = tc.sigs.get(sig_id as usize) {
+                        let mut out = "Tuple<".to_string();
                         for (i, a) in sig.args.iter().enumerate() {
                             if i != 0 {
                                 out.push_str(", ");
                             }
-                            out.push_str(&type_name(*a, Some(tt)));
+                            out.push_str(&type_name(*a, tc));
                         }
-                        out.push_str(") -> ");
-                        out.push_str(&type_name(sig.ret_type, Some(tt)));
+                        out.push('>');
                         return out;
                     }
                 }
-                TypeKind::Object => {
-                    const TUPLE_TAG: u32 = 0x8000_0000;
-                    if (te.p0 & TUPLE_TAG) != 0 {
-                        let sig_id = te.p0 & !TUPLE_TAG;
-                        if let Some(sig) = tt.sigs.get(sig_id as usize) {
-                            let mut out = "Tuple<".to_string();
-                            for (i, a) in sig.args.iter().enumerate() {
-                                if i != 0 {
-                                    out.push_str(", ");
-                                }
-                                out.push_str(&type_name(*a, Some(tt)));
-                            }
-                            out.push('>');
-                            return out;
-                        }
-                    }
-                }
-                _ => {}
             }
+            _ => {}
         }
     }
     match tid {
@@ -127,7 +129,7 @@ fn render_stmt(s: &Stmt, info: &SemanticInfo, indent: usize, out: &mut String) {
                 span.start,
                 span.end,
                 bind_t
-                    .map(|t| format!(" : {}", type_name(t, info.type_tables.as_ref())))
+                    .map(|t| format!(" : {}", type_name(t, &info.type_ctx)))
                     .unwrap_or_default()
             ));
             render_expr(expr, info, indent + 1, out);
@@ -190,7 +192,7 @@ fn render_expr(e: &Expr, info: &SemanticInfo, indent: usize, out: &mut String) {
     let span = e.span;
     let ty = info.expr_types.get(&NodeId(span)).copied();
     let ty_s = ty
-        .map(|t| type_name(t, info.type_tables.as_ref()))
+        .map(|t| type_name(t, &info.type_ctx))
         .unwrap_or_else(|| "?".to_string());
 
     match &e.node {
@@ -258,7 +260,7 @@ fn render_expr(e: &Expr, info: &SemanticInfo, indent: usize, out: &mut String) {
                         out.push_str(&format!(
                             "{pad}    {} : {}\n",
                             c.name,
-                            type_name(c.tid, info.type_tables.as_ref())
+                            type_name(c.tid, &info.type_ctx)
                         ));
                     }
                 }

@@ -210,6 +210,7 @@ pub fn type_repr_from_jlyb(m: &crate::jlyb::Module, tid: u32) -> Result<TypeRepr
 }
 
 /// Type context for the compiler.
+#[derive(Clone, Debug)]
 pub struct TypeCtx {
     pub types: Vec<TypeEntry>,
     pub sigs: Vec<FunSig>,

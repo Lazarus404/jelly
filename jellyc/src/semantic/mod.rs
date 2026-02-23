@@ -2,23 +2,19 @@ use std::collections::HashMap;
 
 use crate::ast::{Expr, ExprKind, Program, Span, Stmt, StmtKind};
 use crate::error::CompileError;
-use crate::hir::{Capture, HirProgram, NodeId, SemanticInfo, TypeTables};
-use crate::lower;
-use crate::typectx::{TypeCtx, T_DYNAMIC, T_OBJECT};
+use crate::hir::{Capture, HirProgram, NodeId, SemanticInfo};
+use crate::typectx::TypeCtx;
+use crate::typectx::{T_DYNAMIC, T_OBJECT};
+
+mod fn_infer;
+mod typecheck;
 
 pub fn analyze_program(p: &Program) -> Result<(HirProgram, SemanticInfo), CompileError> {
     let mut prog = p.clone();
     normalize_truthiness_program(&mut prog);
 
-    let trace = lower::trace_program_types(&prog)?;
-    let mut info = SemanticInfo::default();
-    info.expr_types = trace.expr_types.into_iter().map(|(sp, t)| (NodeId(sp), t)).collect();
-    info.binding_types = trace.binding_types.into_iter().map(|(sp, t)| (NodeId(sp), t)).collect();
+    let mut info = typecheck::typecheck_program(&prog)?;
     info.captures = capture_analysis(&prog, &info);
-    info.type_tables = Some(TypeTables {
-        types: trace.types,
-        sigs: trace.sigs,
-    });
 
     Ok((HirProgram { program: prog }, info))
 }
@@ -32,15 +28,11 @@ pub fn analyze_module_init(
     let mut prog = p.clone();
     normalize_truthiness_program(&mut prog);
 
-    let trace = lower::trace_module_init_types(module_name, &prog, is_entry, import_exports)?;
-    let mut info = SemanticInfo::default();
-    info.expr_types = trace.expr_types.into_iter().map(|(sp, t)| (NodeId(sp), t)).collect();
-    info.binding_types = trace.binding_types.into_iter().map(|(sp, t)| (NodeId(sp), t)).collect();
+    // module_name/is_entry are reserved for future semantic differences (entry program constraints).
+    let _ = module_name;
+    let _ = is_entry;
+    let mut info = typecheck::typecheck_module_init(&prog, import_exports)?;
     info.captures = capture_analysis(&prog, &info);
-    info.type_tables = Some(TypeTables {
-        types: trace.types,
-        sigs: trace.sigs,
-    });
 
     Ok((HirProgram { program: prog }, info))
 }

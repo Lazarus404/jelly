@@ -31,6 +31,7 @@
 use crate::ast::{Expr, ExprKind, Span, Ty};
 use crate::error::{CompileError, ErrorKind};
 use crate::ir::{IrBuilder, IrOp, TypeId, VRegId};
+use crate::typectx::TypeCtx;
 use crate::typectx::{T_F16, T_F32, T_F64, T_I8, T_I16, T_I32, T_I64};
 
 use crate::lower::intern_atom;
@@ -69,7 +70,7 @@ pub(super) fn builtin_constraints(
     type_args: &[Ty],
     args_len: usize,
     expect: Option<TypeId>,
-    ctx: &mut LowerCtx,
+    tc: &mut TypeCtx,
     allow_ambiguous_generics: bool,
     span: Span,
 ) -> Result<Option<BuiltinConstraints>, CompileError> {
@@ -227,7 +228,7 @@ pub(super) fn builtin_constraints(
             let ret = if type_args.is_empty() {
                 expect.unwrap_or(T_DYNAMIC)
             } else if type_args.len() == 1 {
-                ctx.type_ctx.resolve_ty(&type_args[0])?
+                tc.resolve_ty(&type_args[0])?
             } else {
                 return Err(err(span, "Object.get<T>(obj, key): expects 1 type arg"));
             };
@@ -262,7 +263,7 @@ pub(super) fn builtin_constraints(
                     }
                 }
             } else if type_args.len() == 1 {
-                let elem = ctx.type_ctx.resolve_ty(&type_args[0])?;
+                let elem = tc.resolve_ty(&type_args[0])?;
                 match elem {
                     T_I32 => T_ARRAY_I32,
                     T_BYTES => T_ARRAY_BYTES,
@@ -325,7 +326,7 @@ pub(super) fn builtin_constraints(
                     }
                 }
             } else if type_args.len() == 1 {
-                let elem = ctx.type_ctx.resolve_ty(&type_args[0])?;
+                let elem = tc.resolve_ty(&type_args[0])?;
                 match elem {
                     T_I32 => T_LIST_I32,
                     T_BYTES => T_LIST_BYTES,
@@ -349,7 +350,7 @@ pub(super) fn builtin_constraints(
             }
             // In strict mode, require T. In ambiguous mode, we can't constrain much.
             if type_args.len() == 1 {
-                let elem = ctx.type_ctx.resolve_ty(&type_args[0])?;
+                let elem = tc.resolve_ty(&type_args[0])?;
                 let list_tid = match elem {
                     T_I32 => T_LIST_I32,
                     T_BYTES => T_LIST_BYTES,
@@ -410,27 +411,6 @@ pub(super) fn try_lower_builtin_call(
     let Some((ns, name)) = builtin_name(callee) else {
         return Ok(None);
     };
-
-    // For HIR dumping / semantic tracing: builtin call lowering often bypasses lowering
-    // the `callee` expression itself (it pattern-matches on it), so record a best-effort
-    // function type for the callee span here.
-    let cons_for_trace = if ctx.trace.is_some() {
-        builtin_constraints(callee, type_args, args.len(), expect, ctx, true, e.span)?
-    } else {
-        None
-    };
-    if let (Some(t), Some(cons)) = (ctx.trace.as_mut(), cons_for_trace) {
-        let arg_tids: Vec<TypeId> = cons
-            .args
-            .iter()
-            .map(|c| match c {
-                ArgConstraint::Exact(tid) => *tid,
-                ArgConstraint::Numeric | ArgConstraint::Any => T_DYNAMIC,
-            })
-            .collect();
-        let fun_tid = ctx.type_ctx.intern_fun_type(cons.ret, &arg_tids);
-        t.expr_types.insert(callee.span, fun_tid);
-    }
 
     // Keep lowering logic as the canonical behavioral definition.
     // Signature/constraint inference for `fn_infer` should mirror this behavior.

@@ -72,15 +72,13 @@ pub fn lower_call_expr(
                         return Err(CompileError::new(ErrorKind::Type, base.span, "module namespace must be Object"));
                     }
 
-                    // If we know this export's declared function type, enforce it; otherwise,
-                    // infer a best-effort function type from the call site.
+                    // If we know this export's declared function type, enforce it.
                     let maybe_tid = ctx
                         .module_alias_exports
                         .get(alias)
                         .and_then(|m| m.get(name))
                         .copied();
 
-                    let mut inferred_args: Option<Vec<(VRegId, TypeId)>> = None;
                     let (fun_tid, sig_id, sig_args, sig_ret) = if let Some(exp_tid) = maybe_tid {
                         let te = ctx
                             .type_ctx
@@ -99,40 +97,19 @@ pub fn lower_call_expr(
                             .clone();
                         (exp_tid, sig_id, sig.args, sig.ret_type)
                     } else {
-                        // Infer a signature (Dynamic return by default).
-                        let mut arg_tids: Vec<TypeId> = Vec::with_capacity(args.len());
-                        let mut arg_vals: Vec<(VRegId, TypeId)> = Vec::with_capacity(args.len());
-                        for a in args.iter() {
-                            let (v, t) = lower_expr_expect(a, None, ctx, b)?;
-                            arg_vals.push((v, t));
-                            arg_tids.push(t);
-                        }
-                        inferred_args = Some(arg_vals);
-                        let ret_tid = expect.unwrap_or(T_DYNAMIC);
-                        let sig_id = ctx.type_ctx.intern_sig(ret_tid, &arg_tids);
-                        let fun_tid = ctx.type_ctx.intern_fun_type(ret_tid, &arg_tids);
-
-                        // Reuse the already-lowered args below.
-                        // (We return them via a dummy vector in place of sig_args.)
-                        // Caller will ignore sig_args for inferred path.
-                        (fun_tid, sig_id, arg_tids, ret_tid)
+                        return Err(CompileError::new(
+                            ErrorKind::Name,
+                            e.span,
+                            format!("unknown export '{}.{}'", alias, name),
+                        ));
                     };
-
-                    if let Some(t) = ctx.trace.as_mut() {
-                        t.expr_types.insert(callee.span, fun_tid);
-                    }
 
                     // Evaluate args left-to-right with expected types when available.
-                    let arg_vals: Vec<(VRegId, TypeId)> = if let Some(v) = inferred_args.take() {
-                        v
-                    } else {
-                        let mut out: Vec<(VRegId, TypeId)> = Vec::with_capacity(args.len());
-                        for (i, a) in args.iter().enumerate() {
-                            let et = sig_args.get(i).copied();
-                            out.push(lower_expr_expect(a, et, ctx, b)?);
-                        }
-                        out
-                    };
+                    let mut arg_vals: Vec<(VRegId, TypeId)> = Vec::with_capacity(args.len());
+                    for (i, a) in args.iter().enumerate() {
+                        let et = sig_args.get(i).copied();
+                        arg_vals.push(lower_expr_expect(a, et, ctx, b)?);
+                    }
 
                     let atom_id = intern_atom(name, ctx);
                     let v_f = b.new_vreg(fun_tid);
@@ -206,10 +183,6 @@ pub fn lower_call_expr(
 
             let v_bound = b.new_vreg(bound_fun_tid);
             b.emit(e.span, IrOp::BindThis { dst: v_bound, func: v_unbound, this: v_obj });
-
-            if let Some(t) = ctx.trace.as_mut() {
-                t.expr_types.insert(callee.span, bound_fun_tid);
-            }
 
             // Build a contiguous vreg window holding the arguments.
             let nargs = arg_vals.len() as u8;

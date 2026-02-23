@@ -1679,7 +1679,8 @@ mod tests {
             stmts: vec![],
             expr: Spanned::new(ExprKind::BytesLit(b"ok".to_vec()), Span::new(0, 2)),
         };
-        let mut ir = lower_program_to_ir(&prog).unwrap();
+        let (hir, info) = crate::semantic::analyze_program(&prog).unwrap();
+        let mut ir = lower_program_to_ir(&hir.program, &info).unwrap();
         phi::eliminate_phis(&mut ir).unwrap();
         let m = emit_ir_module(&ir).unwrap();
         // entry is logical index; funcs array index = entry - 1 (0 is native)
@@ -1702,7 +1703,8 @@ mod tests {
     fn emit_match_basic_ir() {
         let src = "let x = 2; match (x) { 1 => { \"bad\" }, 2 => { \"ok\" }, _ => { \"bad\" }, }";
         let prog = parse::parse_program(src).unwrap();
-        let mut ir = lower_program_to_ir(&prog).unwrap();
+        let (hir, info) = crate::semantic::analyze_program(&prog).unwrap();
+        let mut ir = lower_program_to_ir(&hir.program, &info).unwrap();
         phi::eliminate_phis(&mut ir).unwrap();
         if let Err(e) = emit_ir_module(&ir) {
             panic!("emit failed: {}\nIR:\n{:#?}", e.render(src, None), ir.funcs[0]);
@@ -1723,7 +1725,8 @@ mod tests {
                 sp,
             ),
         };
-        let mut ir = lower_program_to_ir(&prog).unwrap();
+        let (hir, info) = crate::semantic::analyze_program(&prog).unwrap();
+        let mut ir = lower_program_to_ir(&hir.program, &info).unwrap();
         phi::eliminate_phis(&mut ir).unwrap();
         let m = emit_ir_module(&ir).unwrap();
         let entry_func = (m.entry as usize).saturating_sub(1);
@@ -1755,7 +1758,8 @@ mod tests {
         src.push_str("\"ok\"");
 
         let prog = parse::parse_program(&src).unwrap();
-        let mut ir = lower_program_to_ir(&prog).unwrap();
+        let (hir, info) = crate::semantic::analyze_program(&prog).unwrap();
+        let mut ir = lower_program_to_ir(&hir.program, &info).unwrap();
         phi::eliminate_phis(&mut ir).unwrap();
         let m = emit_ir_module(&ir).unwrap_or_else(|e| {
             let lens: Vec<usize> = ir.funcs.iter().map(|f| f.vreg_types.len()).collect();

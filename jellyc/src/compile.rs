@@ -118,14 +118,14 @@ pub fn compile_file_ir(input: &Path) -> Result<Module, CompileFailure> {
                     import_exports.insert(k.clone(), nodes[di].exports.clone());
                 }
 
-                let (hir, _info) = semantic::analyze_module_init(&n.key, prog, i == entry_idx, &import_exports).map_err(|err| {
+                let (hir, info) = semantic::analyze_module_init(&n.key, prog, i == entry_idx, &import_exports).map_err(|err| {
                     CompileFailure::Compile {
                         err,
                         src: src.clone(),
                         path: Some(path.display().to_string()),
                     }
                 })?;
-                let lowered = lower::lower_module_init_to_ir(&n.key, &hir.program, i == entry_idx, &import_exports)
+                let lowered = lower::lower_module_init_to_ir(&n.key, &hir.program, &info, i == entry_idx, &import_exports)
                     .map_err(|err| CompileFailure::Compile {
                         err,
                         src: src.clone(),

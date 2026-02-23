@@ -30,6 +30,7 @@
 use std::path::PathBuf;
 
 mod ast;
+mod builtin_constraints;
 mod compile;
 mod error;
 mod hir;
@@ -180,7 +181,7 @@ fn main() {
                         println!("-- module: {} --", n.key);
                         print!("{}", hir::render_hir(&hir_prog, &info));
                     } else {
-                        let lowered = lower::lower_module_init_to_ir(&n.key, &hir_prog.program, i == entry_idx, &import_exports)
+                        let lowered = lower::lower_module_init_to_ir(&n.key, &hir_prog.program, &info, i == entry_idx, &import_exports)
                             .unwrap_or_else(|e| {
                                 eprintln!("{}", e.render(src, Some(&path.display().to_string())));
                                 std::process::exit(1);

@@ -460,9 +460,6 @@ pub(super) fn lower_expr_expect(
     b: &mut IrBuilder,
 ) -> Result<(VRegId, TypeId), CompileError> {
     let res = lower_expr_expect_impl(e, expect, ctx, b)?;
-    if let Some(t) = ctx.trace.as_mut() {
-        t.expr_types.insert(e.span, res.1);
-    }
     Ok(res)
 }
 

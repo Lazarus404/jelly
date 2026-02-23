@@ -135,7 +135,8 @@ mod integration {
         let src = "let fib: I32 -> I32 = fn(n) { return if (n < 2) { n } else { fib(n - 1) + fib(n - 2) }; }; \"ok\"";
         let prog = parse::parse_program(src).unwrap();
         resolve::resolve_program(&prog).unwrap();
-        crate::lower::lower_program_to_ir(&prog).unwrap();
+        let (hir, info) = crate::semantic::analyze_program(&prog).unwrap();
+        crate::lower::lower_program_to_ir(&hir.program, &info).unwrap();
     }
 
     #[test]
@@ -147,7 +148,8 @@ mod integration {
         let prog = parse::parse_program(src).unwrap();
         resolve::resolve_program(&prog).unwrap();
         let import_exports: HashMap<String, HashMap<String, crate::typectx::TypeRepr>> = HashMap::new();
-        let lowered = lower::lower_module_init_to_ir("__entry__", &prog, true, &import_exports).unwrap();
+        let (hir, info) = crate::semantic::analyze_module_init("__entry__", &prog, true, &import_exports).unwrap();
+        let lowered = lower::lower_module_init_to_ir("__entry__", &hir.program, &info, true, &import_exports).unwrap();
         let mut irm = lowered.ir;
         phi::eliminate_phis(&mut irm).unwrap();
     }
@@ -158,7 +160,8 @@ mod integration {
         let src = "let o: Object = null; let a: Array<I32> = null; \"ok\"";
         let prog = parse::parse_program(src).unwrap();
         resolve::resolve_program(&prog).unwrap();
-        crate::lower::lower_program_to_ir(&prog).unwrap();
+        let (hir, info) = crate::semantic::analyze_program(&prog).unwrap();
+        crate::lower::lower_program_to_ir(&hir.program, &info).unwrap();
     }
 
     #[test]
@@ -166,7 +169,8 @@ mod integration {
         let src = "let a: F64 = 1.0; let b: F64 = 2.0; if (a < b) { \"ok\" } else { \"bad\" }";
         let prog = parse::parse_program(src).unwrap();
         resolve::resolve_program(&prog).unwrap();
-        crate::lower::lower_program_to_ir(&prog).unwrap();
+        let (hir, info) = crate::semantic::analyze_program(&prog).unwrap();
+        crate::lower::lower_program_to_ir(&hir.program, &info).unwrap();
     }
 
     #[test]
@@ -174,7 +178,8 @@ mod integration {
         let src = "let x: F64 = Float.to_f64(3); let y: I32 = Integer.to_i32(x); if (y == 3) { \"ok\" } else { \"bad\" }";
         let prog = parse::parse_program(src).unwrap();
         resolve::resolve_program(&prog).unwrap();
-        crate::lower::lower_program_to_ir(&prog).unwrap();
+        let (hir, info) = crate::semantic::analyze_program(&prog).unwrap();
+        crate::lower::lower_program_to_ir(&hir.program, &info).unwrap();
     }
 
     #[test]
@@ -183,7 +188,8 @@ mod integration {
         let src = "let x: I32 = 1; let y: I32 = x; y = 2; if (x == 1) { \"ok\" } else { \"bad\" }";
         let prog = parse::parse_program(src).unwrap();
         resolve::resolve_program(&prog).unwrap();
-        crate::lower::lower_program_to_ir(&prog).unwrap();
+        let (hir, info) = crate::semantic::analyze_program(&prog).unwrap();
+        crate::lower::lower_program_to_ir(&hir.program, &info).unwrap();
     }
 
     #[test]
@@ -215,6 +221,7 @@ mod integration {
             ("consts".to_string(), consts_exports),
         ]);
 
-        lower::lower_module_init_to_ir("__entry__", &entry_prog, true, &import_exports).unwrap();
+        let (hir, info) = crate::semantic::analyze_module_init("__entry__", &entry_prog, true, &import_exports).unwrap();
+        lower::lower_module_init_to_ir("__entry__", &hir.program, &info, true, &import_exports).unwrap();
     }
 }
