@@ -1,0 +1,11 @@
+// Shift left and right
+let a : I32 = 1;
+let b = a << 4;
+System.assert(b == 16);
+let c = 64 >> 3;
+System.assert(c == 8);
+let d : I32 = 1 << 10;
+System.assert(d == 1024);
+let e = 256 >> 4;
+System.assert(e == 16);
+"ok"

@@ -1,0 +1,5 @@
+let r = with 1 <- 2 {
+  99
+};
+System.assert(r == 2);
+"ok"

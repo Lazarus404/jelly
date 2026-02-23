@@ -1,0 +1,5 @@
+let r = with x <- 42 {
+  x
+};
+System.assert(r == 42);
+"ok"

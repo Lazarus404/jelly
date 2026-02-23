@@ -26,14 +26,18 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  */
-
+use crate::typectx::TypeRepr;
 use std::path::PathBuf;
+use std::process::exit;
 
 mod ast;
+mod builtin_constraints;
+mod codegen;
 mod compile;
 mod error;
+mod frontend;
+mod hir;
 mod ir;
-mod ir_codegen;
 mod jlyb;
 mod lex;
 mod link;
@@ -43,23 +47,27 @@ mod parse;
 mod peephole;
 mod phi;
 mod regalloc;
-mod resolve;
+mod semantic;
 mod source;
 mod templates;
 mod token;
 mod typectx;
+mod visit;
+mod repl;
+#[cfg(feature = "embed-vm")]
+mod vm;
 
 fn usage() -> ! {
     eprintln!(
-        "usage:\n  jellyc prelude --out <prelude.jlyb>\n  jellyc <input.jelly> [--out <output.jlyb>] [--backend ast|ir]"
+        "usage:\n  jellyc prelude --out <prelude.jlyb>\n  jellyc <input.jelly> [--out <output.jlyb>] [--backend ir]\n  jellyc <input.jelly> --dump ast|hir|ir\n  jellyc [--repl [<file.jelly>]]\n\naliases:\n  --ast == --dump ast\n  --hir == --dump hir\n  --ir  == --dump ir\n\nREPL:\n  jellyc              Start REPL (no preload)\n  jellyc --repl        Start REPL (no preload)\n  jellyc --repl <file> Start REPL with <file.jelly> preloaded\n  Exit REPL by calling exit() or System.exit() (CTRL+C cancels input only)\n\nnotes:\n  The AST bytecode backend has been removed; all compilation goes through the IR pipeline."
     );
-    std::process::exit(2);
+    exit(2);
 }
 
 fn read_to_string(path: &PathBuf) -> String {
     std::fs::read_to_string(path).unwrap_or_else(|e| {
         eprintln!("error: failed to read {}: {}", path.display(), e);
-        std::process::exit(2);
+        exit(2);
     })
 }
 
@@ -70,8 +78,26 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let first = match args.next() {
         Some(a) => a,
-        None => usage(),
+        None => {
+            // No args: start REPL
+            if let Err(e) = repl::run(None) {
+                eprintln!("repl: {}", e);
+                exit(1);
+            }
+            return;
+        }
     };
+
+    // --repl [file.jelly]
+    if first == "--repl" {
+        let preload = args.next().filter(|a| !a.starts_with('-'));
+        let preload_path = preload.map(PathBuf::from).filter(|p| p.extension().map_or(false, |e| e == "jelly"));
+        if let Err(e) = repl::run(preload_path.as_deref()) {
+            eprintln!("repl: {}", e);
+            exit(1);
+        }
+        return;
+    }
 
     // Compile the prelude
     if first == "prelude" {
@@ -89,7 +115,7 @@ fn main() {
         let out = out.unwrap_or_else(|| usage());
         if let Err(e) = compile::compile_prelude(&out) {
             eprintln!("{}", e.render("", None));
-            std::process::exit(1);
+            exit(1);
         }
         return;
     }
@@ -103,7 +129,7 @@ fn main() {
 
     // Parse the command line arguments
     let mut out: Option<PathBuf> = None;
-    let mut backend = compile::Backend::Ast;
+    let mut dump: Option<String> = None;
     while let Some(a) = args.next() {
         match a.as_str() {
             "--out" => {
@@ -112,13 +138,107 @@ fn main() {
             }
             "--backend" => {
                 let b = args.next().unwrap_or_else(|| usage());
-                backend = match b.as_str() {
-                    "ast" => compile::Backend::Ast,
-                    "ir" => compile::Backend::Ir,
+                match b.as_str() {
+                    "ir" => {}
+                    "ast" => {
+                        eprintln!(
+                            "error: AST backend removed; use `--backend ir` (or omit the flag)."
+                        );
+                        exit(2);
+                    }
                     _ => usage(),
-                };
+                }
             }
+            "--dump" => {
+                let d = args.next().unwrap_or_else(|| usage());
+                dump = Some(d);
+            }
+            "--ast" => dump = Some("ast".to_string()),
+            "--hir" => dump = Some("hir".to_string()),
+            "--ir" => dump = Some("ir".to_string()),
             "--help" | "-h" => usage(),
+            _ => usage(),
+        }
+    }
+
+    if let Some(stage) = dump {
+        match stage.as_str() {
+            "ast" => {
+                // `--dump ast` is intentionally "pre-semantic": just parse this file and dump it.
+                let src = read_to_string(&input);
+                let prog = parse::parse_program(&src).unwrap_or_else(|e| {
+                    eprintln!("{}", e.render(&src, Some(&input.display().to_string())));
+                    exit(1);
+                });
+                println!("{:#?}", prog);
+                return;
+            }
+            "hir" | "ir" => {
+                // For HIR/IR dumps we use the same module-graph loading as the IR backend,
+                // so imports/exports are reflected truthfully.
+                let (nodes, entry_idx, _root_dir) =
+                    link::load_module_graph(&input).unwrap_or_else(|e| {
+                        eprintln!("{}", e.render());
+                        exit(1);
+                    });
+
+                let mut key_to_index: std::collections::HashMap<String, usize> =
+                    std::collections::HashMap::new();
+                for (i, n) in nodes.iter().enumerate() {
+                    key_to_index.insert(n.key.clone(), i);
+                }
+
+                for (i, n) in nodes.iter().enumerate() {
+                    let (path, src, prog) = match &n.file {
+                        link::LoadedFile::Source { path, src, prog } => (path, src, prog),
+                        link::LoadedFile::Bytecode { .. } => continue,
+                    };
+
+                    let mut import_exports: std::collections::HashMap<
+                        String,
+                        std::collections::HashMap<String, TypeRepr>,
+                    > = std::collections::HashMap::new();
+                    for k in &n.import_keys {
+                        let di = *key_to_index.get(k).expect("dep in graph");
+                        import_exports.insert(k.clone(), nodes[di].exports.clone());
+                    }
+
+                    let prepared = crate::frontend::prepared(prog);
+                    let (hir_prog, info) = semantic::analyze_prepared_module_init(
+                        &n.key,
+                        prepared,
+                        i == entry_idx,
+                        false, // is_repl
+                        &import_exports,
+                    )
+                    .unwrap_or_else(|e| {
+                        eprintln!("{}", e.render(src, Some(&path.display().to_string())));
+                        exit(1);
+                    });
+
+                    if stage == "hir" {
+                        println!("-- module: {} --", n.key);
+                        print!("{}", hir::render_hir(&hir_prog, &info));
+                    } else {
+                        let lowered = lower::lower_module_init_to_ir(
+                            &n.key,
+                            &hir_prog.program,
+                            &info,
+                            i == entry_idx,
+                            false, // is_repl
+                            &import_exports,
+                        )
+                        .unwrap_or_else(|e| {
+                            eprintln!("{}", e.render(src, Some(&path.display().to_string())));
+                            exit(1);
+                        });
+                        println!("-- module: {} --", n.key);
+                        print!("{}", ir::render_ir(&lowered.ir));
+                    }
+                }
+
+                return;
+            }
             _ => usage(),
         }
     }
@@ -131,26 +251,18 @@ fn main() {
     });
 
     // Compile the input file
-    let m = match backend {
-        compile::Backend::Ast => compile::compile_file_ast(&input).unwrap_or_else(|e| {
-            let src = read_to_string(&input);
-            eprintln!("{}", e.render(&src, Some(&input.display().to_string())));
-            std::process::exit(1);
-        }),
-        compile::Backend::Ir => compile::compile_file_ir(&input).unwrap_or_else(|f| {
-            eprintln!("{}", f.render());
-            std::process::exit(1);
-        }),
-    };
+    let m = compile::compile_file_ir(&input).unwrap_or_else(|f| {
+        eprintln!("{}", f.render());
+        exit(1);
+    });
 
     // Write the output file
     let mut f = std::fs::File::create(&out).unwrap_or_else(|e| {
         eprintln!("error: failed to create {}: {}", out.display(), e);
-        std::process::exit(2);
+        exit(2);
     });
     m.write_to(&mut f).unwrap_or_else(|e| {
         eprintln!("error: failed to write {}: {}", out.display(), e);
-        std::process::exit(2);
+        exit(2);
     });
 }
-

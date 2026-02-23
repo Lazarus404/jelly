@@ -3,6 +3,15 @@
 jellyc/target/
 vm/build/
 vm/cmake/
+bench/out/
+
+# CMake generated files
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+CMakeCache.txt
+Makefile
+Testing/
 
 .DS_Store
 *.jlyb

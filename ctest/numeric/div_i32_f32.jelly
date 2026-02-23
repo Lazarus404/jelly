@@ -1,0 +1,6 @@
+let a : I32 = 20;
+let b : I32 = 10;
+let c = b / a;
+let r = if (c == 0.5) { "ok" } else { "bad" };
+System.assert(r == "ok");
+r

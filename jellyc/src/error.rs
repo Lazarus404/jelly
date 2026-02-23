@@ -26,9 +26,8 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  */
-
 use crate::ast::Span;
-use crate::source::Source;
+use crate::source::DiagEmitter;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ErrorKind {
@@ -39,7 +38,26 @@ pub enum ErrorKind {
     Internal,
 }
 
-#[derive(Clone, Debug)]
+impl ErrorKind {
+    pub fn label(&self) -> &'static str {
+        match self {
+            ErrorKind::Parse => "parse error",
+            ErrorKind::Name => "name error",
+            ErrorKind::Type => "type error",
+            ErrorKind::Codegen => "codegen error",
+            ErrorKind::Internal => "internal error",
+        }
+    }
+}
+
+impl std::fmt::Display for ErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.label())
+    }
+}
+
+#[derive(Clone, Debug, thiserror::Error)]
+#[error("{kind}: {message}")]
 pub struct CompileError {
     pub kind: ErrorKind,
     pub message: String,
@@ -60,31 +78,17 @@ impl CompileError {
     }
 
     pub fn render(&self, src: &str, path: Option<&str>) -> String {
-        let source = Source::new(src);
-        let (line, col, src_line, caret) = source.render_span(self.span);
-
-        let kind = match self.kind {
-            ErrorKind::Parse => "parse error",
-            ErrorKind::Name => "name error",
-            ErrorKind::Type => "type error",
-            ErrorKind::Codegen => "codegen error",
-            ErrorKind::Internal => "internal error",
-        };
-
-        let loc = match path {
-            Some(p) => format!("{}:{}:{}", p, line, col),
-            None => format!("{}:{}", line, col),
-        };
-
-        format!(
-            "{}: {}\n --> {}\n{}\n{}",
-            kind, self.message, loc, src_line, caret
+        crate::source::DiagEmitter::new(src, path).render_error(
+            self.kind.label(),
+            self.span,
+            &self.message,
         )
     }
 }
 
 /// A compile-time warning (eg implicit narrowing conversion).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, thiserror::Error)]
+#[error("{message}")]
 pub struct CompileWarning {
     pub message: String,
     pub span: Span,
@@ -98,19 +102,8 @@ impl CompileWarning {
         }
     }
 
+    #[allow(dead_code)]
     pub fn render(&self, src: &str, path: Option<&str>) -> String {
-        let source = Source::new(src);
-        let (line, col, src_line, caret) = source.render_span(self.span);
-
-        let loc = match path {
-            Some(p) => format!("{}:{}:{}", p, line, col),
-            None => format!("{}:{}", line, col),
-        };
-
-        format!(
-            "warning: {}\n --> {}\n{}\n{}",
-            self.message, loc, src_line, caret
-        )
+        DiagEmitter::new(src, path).render_warning(self.span, &self.message)
     }
 }
-

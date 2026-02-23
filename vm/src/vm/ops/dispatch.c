@@ -57,6 +57,8 @@ op_result op_const_fun(exec_ctx* ctx, const jelly_insn* ins);
 
 op_result op_call(exec_ctx* ctx, const jelly_insn* ins);
 op_result op_callr(exec_ctx* ctx, const jelly_insn* ins);
+op_result op_tailcall(exec_ctx* ctx, const jelly_insn* ins);
+op_result op_tailcallr(exec_ctx* ctx, const jelly_insn* ins);
 op_result op_closure(exec_ctx* ctx, const jelly_insn* ins);
 op_result op_bind_this(exec_ctx* ctx, const jelly_insn* ins);
 
@@ -85,6 +87,12 @@ op_result op_div_f64(exec_ctx* ctx, const jelly_insn* ins);
 op_result op_add_i64(exec_ctx* ctx, const jelly_insn* ins);
 op_result op_sub_i64(exec_ctx* ctx, const jelly_insn* ins);
 op_result op_mul_i64(exec_ctx* ctx, const jelly_insn* ins);
+op_result op_mod_i32(exec_ctx* ctx, const jelly_insn* ins);
+op_result op_mod_i64(exec_ctx* ctx, const jelly_insn* ins);
+op_result op_shl_i32(exec_ctx* ctx, const jelly_insn* ins);
+op_result op_shl_i64(exec_ctx* ctx, const jelly_insn* ins);
+op_result op_shr_i32(exec_ctx* ctx, const jelly_insn* ins);
+op_result op_shr_i64(exec_ctx* ctx, const jelly_insn* ins);
 op_result op_eq_i32(exec_ctx* ctx, const jelly_insn* ins);
 op_result op_eq_i32_imm(exec_ctx* ctx, const jelly_insn* ins);
 op_result op_lt_i32_imm(exec_ctx* ctx, const jelly_insn* ins);
@@ -170,7 +178,7 @@ op_result op_dispatch(exec_ctx* ctx, const jelly_insn* ins) {
   /* Computed goto: often 10-20% faster than switch on hot dispatch. */
   static const void* const op_table[128] = {
     [JOP_NOP] = &&L_NOP, [JOP_RET] = &&L_RET, [JOP_MOV] = &&L_MOV, [JOP_CALL] = &&L_CALL,
-    [JOP_CALLR] = &&L_CALLR, [JOP_CONST_I32] = &&L_CONST_I32, [JOP_CONST_BOOL] = &&L_CONST_BOOL,
+    [JOP_CALLR] = &&L_CALLR, [JOP_TAILCALL] = &&L_TAILCALL, [JOP_TAILCALLR] = &&L_TAILCALLR, [JOP_CONST_I32] = &&L_CONST_I32, [JOP_CONST_BOOL] = &&L_CONST_BOOL,
     [JOP_CONST_ATOM] = &&L_CONST_ATOM, [JOP_CONST_FUN] = &&L_CONST_FUN, [JOP_CONST_NULL] = &&L_CONST_NULL,
     [JOP_CONST_F32] = &&L_CONST_F32, [JOP_CONST_F16] = &&L_CONST_F16, [JOP_CONST_I64] = &&L_CONST_I64, [JOP_CONST_F64] = &&L_CONST_F64,
     [JOP_CONST_I8_IMM] = &&L_CONST_I8_IMM,
@@ -183,7 +191,11 @@ op_result op_dispatch(exec_ctx* ctx, const jelly_insn* ins) {
     [JOP_ADD_F16] = &&L_ADD_F16, [JOP_SUB_F16] = &&L_SUB_F16, [JOP_MUL_F16] = &&L_MUL_F16,
     [JOP_ADD_F64] = &&L_ADD_F64,
     [JOP_SUB_F64] = &&L_SUB_F64, [JOP_MUL_F64] = &&L_MUL_F64, [JOP_ADD_I64] = &&L_ADD_I64,
-    [JOP_SUB_I64] = &&L_SUB_I64, [JOP_MUL_I64] = &&L_MUL_I64,     [JOP_SEXT_I64] = &&L_SEXT_I64, [JOP_SEXT_I16] = &&L_SEXT_I16,
+    [JOP_SUB_I64] = &&L_SUB_I64, [JOP_MUL_I64] = &&L_MUL_I64,
+    [JOP_MOD_I32] = &&L_MOD_I32, [JOP_MOD_I64] = &&L_MOD_I64,
+    [JOP_SHL_I32] = &&L_SHL_I32, [JOP_SHL_I64] = &&L_SHL_I64,
+    [JOP_SHR_I32] = &&L_SHR_I32, [JOP_SHR_I64] = &&L_SHR_I64,
+    [JOP_SEXT_I64] = &&L_SEXT_I64, [JOP_SEXT_I16] = &&L_SEXT_I16,
     [JOP_TRUNC_I8] = &&L_TRUNC_I8, [JOP_TRUNC_I16] = &&L_TRUNC_I16,
     [JOP_DIV_F32] = &&L_DIV_F32, [JOP_DIV_F64] = &&L_DIV_F64,
     [JOP_I32_FROM_I64] = &&L_I32_FROM_I64, [JOP_F64_FROM_I32] = &&L_F64_FROM_I32,
@@ -257,7 +269,11 @@ L_RET: {
   if(caller->f->reg_types[caller_dst] == ret_tid) {
     jelly_type_kind k = m->types[ret_tid].kind;
     size_t sz = jelly_slot_size(k);
-    memmove(vm_reg_ptr(&caller->rf, caller_dst), vm_reg_ptr(&fr->rf, ins->a), sz);
+    uint8_t* dst = (uint8_t*)vm_reg_ptr(&caller->rf, caller_dst);
+    const uint8_t* src = (const uint8_t*)vm_reg_ptr(&fr->rf, ins->a);
+    if(sz == 4u) *(uint32_t*)dst = *(const uint32_t*)src;
+    else if(sz == 8u) *(uint64_t*)dst = *(const uint64_t*)src;
+    else memmove(dst, src, sz);
     vm_rf_release(vm, &fr->rf);
     vm->call_frames_len--;
     return OP_CONTINUE;
@@ -273,15 +289,20 @@ L_MOV: {
   const jelly_bc_module* m = ctx->m;
   call_frame* fr = ctx->fr;
   const jelly_bc_function* f = ctx->f;
-  const jelly_type_entry* types = m->types;
   uint32_t a = ins->a, b = ins->b;
-  jelly_type_kind k = types[f->reg_types[a]].kind;
+  jelly_type_kind k = m->types[f->reg_types[a]].kind;
   size_t sz = jelly_slot_size(k);
-  memmove(vm_reg_ptr(&fr->rf, a), vm_reg_ptr(&fr->rf, b), sz);
+  uint8_t* dst = (uint8_t*)vm_reg_ptr(&fr->rf, a);
+  const uint8_t* src = (const uint8_t*)vm_reg_ptr(&fr->rf, b);
+  if(sz == 4u) *(uint32_t*)dst = *(const uint32_t*)src;
+  else if(sz == 8u) *(uint64_t*)dst = *(const uint64_t*)src;
+  else memmove(dst, src, sz);
   return OP_CONTINUE;
 }
 L_CALL: return op_call(ctx, ins);
 L_CALLR: return op_callr(ctx, ins);
+L_TAILCALL: return op_tailcall(ctx, ins);
+L_TAILCALLR: return op_tailcallr(ctx, ins);
 L_CONST_I32: {
   vm_store_u32(&ctx->fr->rf, ins->a, ins->imm);
   return OP_CONTINUE;
@@ -369,7 +390,13 @@ L_MUL_F64: return op_mul_f64(ctx, ins);
 L_ADD_I64: return op_add_i64(ctx, ins);
 L_SUB_I64: return op_sub_i64(ctx, ins);
 L_MUL_I64: return op_mul_i64(ctx, ins);
-L_SEXT_I64: return op_sext_i64(ctx, ins);
+    L_MOD_I32: return op_mod_i32(ctx, ins);
+    L_MOD_I64: return op_mod_i64(ctx, ins);
+    L_SHL_I32: return op_shl_i32(ctx, ins);
+    L_SHL_I64: return op_shl_i64(ctx, ins);
+    L_SHR_I32: return op_shr_i32(ctx, ins);
+    L_SHR_I64: return op_shr_i64(ctx, ins);
+    L_SEXT_I64: return op_sext_i64(ctx, ins);
 L_SEXT_I16: return op_sext_i16(ctx, ins);
 L_TRUNC_I8: return op_trunc_i8(ctx, ins);
 L_TRUNC_I16: return op_trunc_i16(ctx, ins);
@@ -466,6 +493,8 @@ L_PANIC: return op_panic(ctx, ins);
     case JOP_MOV: return op_mov(ctx, ins);
     case JOP_CALL: return op_call(ctx, ins);
     case JOP_CALLR: return op_callr(ctx, ins);
+    case JOP_TAILCALL: return op_tailcall(ctx, ins);
+    case JOP_TAILCALLR: return op_tailcallr(ctx, ins);
     case JOP_CONST_I32: return op_const_i32(ctx, ins);
     case JOP_CONST_BOOL: return op_const_bool(ctx, ins);
     case JOP_CONST_ATOM: return op_const_atom(ctx, ins);
@@ -500,6 +529,12 @@ L_PANIC: return op_panic(ctx, ins);
     case JOP_ADD_I64: return op_add_i64(ctx, ins);
     case JOP_SUB_I64: return op_sub_i64(ctx, ins);
     case JOP_MUL_I64: return op_mul_i64(ctx, ins);
+    case JOP_MOD_I32: return op_mod_i32(ctx, ins);
+    case JOP_MOD_I64: return op_mod_i64(ctx, ins);
+    case JOP_SHL_I32: return op_shl_i32(ctx, ins);
+    case JOP_SHL_I64: return op_shl_i64(ctx, ins);
+    case JOP_SHR_I32: return op_shr_i32(ctx, ins);
+    case JOP_SHR_I64: return op_shr_i64(ctx, ins);
     case JOP_DIV_F32: return op_div_f32(ctx, ins);
     case JOP_DIV_F64: return op_div_f64(ctx, ins);
     case JOP_SEXT_I64: return op_sext_i64(ctx, ins);

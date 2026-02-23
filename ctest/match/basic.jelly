@@ -1,0 +1,8 @@
+let x = 2;
+let r = match (x) {
+  1 => { "bad" },
+  2 => { "ok" },
+  _ => { "bad" },
+};
+System.assert(r == "ok");
+r

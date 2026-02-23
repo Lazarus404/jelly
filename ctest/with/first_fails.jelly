@@ -1,0 +1,7 @@
+let r = with 1 <- 2 {
+  99
+} else {
+  _ => 42
+};
+System.assert(r == 42);
+"ok"

@@ -1,0 +1,32 @@
+let a = 1;
+let b = 2;
+let c = 3;
+let d = 4;
+let e = 5;
+let f = fn(x) {
+  return match (x) {
+    1, 2 => "ok",
+    3, 4 => "so-so",
+    _ => "bad",
+  }
+};
+System.assert(f(a) == "ok");
+System.assert(f(b) == "ok");
+System.assert(f(c) == "so-so");
+System.assert(f(d) == "so-so");
+System.assert(f(e) == "bad");
+
+let f2 = fn(x) {
+  return match (x) {
+    1, 2 when (false) => "a",
+    1, 2 when (true) => "b",
+    3, 4 when (false) => "c",
+    3, 4 when (true) => "d",
+    _ => "bad",
+  }
+};
+System.assert(f2(a) == "b");
+System.assert(f2(b) == "b");
+System.assert(f2(c) == "d");
+System.assert(f2(d) == "d");
+"ok"

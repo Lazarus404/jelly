@@ -129,8 +129,8 @@ jelly_bc_result jelly_bc_validate_insn(const jelly_bc_module* m,
     case JOP_CLOSURE: {
       if(ins->a >= nregs || ins->b >= nregs) return err(JELLY_BC_BAD_FORMAT, "closure reg out of range", 0);
       if(rk(m, reg_types, ins->a) != JELLY_T_FUNCTION) return err(JELLY_BC_BAD_FORMAT, "closure dst must be function", 0);
-      /* Logical index: 0=native, 1..nfuncs=bytecode */
-      if(ins->imm > nfuncs) return err(JELLY_BC_BAD_FORMAT, "closure func index out of range", 0);
+      /* Logical index: 0..NATIVE-1=native, NATIVE..NATIVE+nfuncs-1=bytecode */
+      if(ins->imm >= JELLY_NATIVE_BUILTIN_COUNT + nfuncs) return err(JELLY_BC_BAD_FORMAT, "closure func index out of range", 0);
       uint32_t first = ins->b;
       uint32_t ncaps = ins->c;
       if(first + ncaps > nregs) return err(JELLY_BC_BAD_FORMAT, "closure capture range out of range", 0);
@@ -142,8 +142,8 @@ jelly_bc_result jelly_bc_validate_insn(const jelly_bc_module* m,
       return ok();
     case JOP_CALL: {
       if(ins->a >= nregs || ins->b >= nregs) return err(JELLY_BC_BAD_FORMAT, "call reg out of range", 0);
-      /* Logical index: 0=native, 1..nfuncs=bytecode */
-      if(ins->imm > nfuncs) return err(JELLY_BC_BAD_FORMAT, "call func index out of range", 0);
+      /* Logical index: 0..NATIVE-1=native, NATIVE..NATIVE+nfuncs-1=bytecode */
+      if(ins->imm >= JELLY_NATIVE_BUILTIN_COUNT + nfuncs) return err(JELLY_BC_BAD_FORMAT, "call func index out of range", 0);
       // args are in a contiguous range [b, b+c)
       uint32_t first = ins->b;
       uint32_t nargs = ins->c;
@@ -157,6 +157,23 @@ jelly_bc_result jelly_bc_validate_insn(const jelly_bc_module* m,
       uint32_t nargs = ins->c;
       if(first >= nregs) return err(JELLY_BC_BAD_FORMAT, "callr arg base out of range", 0);
       if(first + nargs > nregs) return err(JELLY_BC_BAD_FORMAT, "callr arg range out of range", 0);
+      return ok();
+    }
+    case JOP_TAILCALL: {
+      if(ins->a >= nregs || ins->b >= nregs) return err(JELLY_BC_BAD_FORMAT, "tailcall reg out of range", 0);
+      if(ins->imm >= JELLY_NATIVE_BUILTIN_COUNT + nfuncs) return err(JELLY_BC_BAD_FORMAT, "tailcall func index out of range", 0);
+      uint32_t first = ins->b;
+      uint32_t nargs = ins->c;
+      if(first + nargs > nregs) return err(JELLY_BC_BAD_FORMAT, "tailcall arg range out of range", 0);
+      return ok();
+    }
+    case JOP_TAILCALLR: {
+      if(ins->a >= nregs || ins->b >= nregs) return err(JELLY_BC_BAD_FORMAT, "tailcallr reg out of range", 0);
+      if(rk(m, reg_types, ins->b) != JELLY_T_FUNCTION) return err(JELLY_BC_BAD_FORMAT, "tailcallr callee must be function", 0);
+      uint32_t first = ins->imm;
+      uint32_t nargs = ins->c;
+      if(first >= nregs) return err(JELLY_BC_BAD_FORMAT, "tailcallr arg base out of range", 0);
+      if(first + nargs > nregs) return err(JELLY_BC_BAD_FORMAT, "tailcallr arg range out of range", 0);
       return ok();
     }
     case JOP_CONST_I32:
@@ -217,12 +234,15 @@ jelly_bc_result jelly_bc_validate_insn(const jelly_bc_module* m,
     case JOP_CONST_FUN:
       if(ins->a >= nregs) return err(JELLY_BC_BAD_FORMAT, "const reg out of range", 0);
       if(rk(m, reg_types, ins->a) != JELLY_T_FUNCTION) return err(JELLY_BC_BAD_FORMAT, "const_fun dst must be function", 0);
-      /* Logical index: 0=native, 1..nfuncs=bytecode */
-      if(ins->imm > nfuncs) return err(JELLY_BC_BAD_FORMAT, "const_fun func index out of range", 0);
+      /* Logical index: 0..NATIVE-1=native, NATIVE..NATIVE+nfuncs-1=bytecode */
+      if(ins->imm >= JELLY_NATIVE_BUILTIN_COUNT + nfuncs) return err(JELLY_BC_BAD_FORMAT, "const_fun func index out of range", 0);
       return ok();
     case JOP_ADD_I32:
     case JOP_SUB_I32:
     case JOP_MUL_I32:
+    case JOP_MOD_I32:
+    case JOP_SHL_I32:
+    case JOP_SHR_I32:
       if(ins->a >= nregs || ins->b >= nregs || ins->c >= nregs) return err(JELLY_BC_BAD_FORMAT, "arith reg out of range", 0);
       if((rk(m, reg_types, ins->a) != JELLY_T_I8 && rk(m, reg_types, ins->a) != JELLY_T_I16 && rk(m, reg_types, ins->a) != JELLY_T_I32) ||
          (rk(m, reg_types, ins->b) != JELLY_T_I8 && rk(m, reg_types, ins->b) != JELLY_T_I16 && rk(m, reg_types, ins->b) != JELLY_T_I32) ||
@@ -240,6 +260,9 @@ jelly_bc_result jelly_bc_validate_insn(const jelly_bc_module* m,
     case JOP_ADD_I64:
     case JOP_SUB_I64:
     case JOP_MUL_I64:
+    case JOP_MOD_I64:
+    case JOP_SHL_I64:
+    case JOP_SHR_I64:
       if(ins->a >= nregs || ins->b >= nregs || ins->c >= nregs) return err(JELLY_BC_BAD_FORMAT, "arith reg out of range", 0);
       if(rk(m, reg_types, ins->a) != JELLY_T_I64 ||
          rk(m, reg_types, ins->b) != JELLY_T_I64 ||

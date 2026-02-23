@@ -1,0 +1,8 @@
+let t = (7, 5);
+let b = 5;
+let r = match (t) {
+  (7, ^b) => { "ok" },
+  _ => { "bad" }
+};
+System.assert(r == "ok");
+r

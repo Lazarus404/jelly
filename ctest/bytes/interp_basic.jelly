@@ -1,0 +1,15 @@
+let x = "he";
+let y = `a${x}b`;
+let z = `ab`;
+let ok =
+  (Bytes.len(y) == 4) &&
+  (Bytes.get_u8(y, 0) == 97) &&
+  (Bytes.get_u8(y, 1) == 104) &&
+  (Bytes.get_u8(y, 2) == 101) &&
+  (Bytes.get_u8(y, 3) == 98) &&
+  (Bytes.len(z) == 2) &&
+  (Bytes.get_u8(z, 0) == 97) &&
+  (Bytes.get_u8(z, 1) == 98);
+let r = if (ok) { "ok" } else { "bad" };
+System.assert(r == "ok");
+r

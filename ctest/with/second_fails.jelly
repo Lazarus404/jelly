@@ -1,0 +1,8 @@
+let r = with x <- 1,
+     2 <- x {
+  x
+} else {
+  _ => 7
+};
+System.assert(r == 7);
+"ok"

@@ -1,0 +1,6 @@
+let c : Array<I32> -> I32 = fn(arr) { return arr[0]; };
+let b : Array<I32> = [123];
+let x : I32 = c(b);
+let r = if (x == 123) { "ok" } else { "bad" };
+System.assert(r == "ok");
+r

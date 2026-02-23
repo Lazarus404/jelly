@@ -29,7 +29,6 @@
 
 // Live interval computation for linear-scan register allocation.
 // Extracted from regalloc per docs/compiler_architecture.md.
-
 use super::{AllocError, InstrInfo, VReg};
 use crate::ir::{IrFunction, IrOp, IrTerminator};
 
@@ -55,33 +54,58 @@ pub fn build_intervals(
             return Err(AllocError::IntervalInternalBug);
         }
     }
+    // We use "split positions" so that within a single instruction, all uses occur before defs:
+    //
+    // - use position: 2*pc
+    // - def position: 2*pc + 1
+    //
+    // This reduces register pressure and enables copy/coalescing-like reuse when a value's
+    // last use is in the same instruction where a new value is defined.
+    //
+    // Pass 1: record first def positions and enforce multi-def rules.
     let mut def_pos: Vec<Option<u32>> = vec![None; num_vregs as usize];
     let mut end_pos: Vec<Option<u32>> = vec![None; num_vregs as usize];
-
     for (pc, ins) in instrs.iter().enumerate() {
-        let pos = pc as u32;
+        let pos = (pc as u32) * 2 + 1;
         for &d in &ins.defs {
             if d.0 >= num_vregs {
-                return Err(AllocError::VRegOutOfRange { vreg: d, vregs: num_vregs });
+                return Err(AllocError::VRegOutOfRange {
+                    vreg: d,
+                    vregs: num_vregs,
+                });
             }
             if def_pos[d.0 as usize].is_some() {
                 let allow = allow_multi_def.map(|a| a[d.0 as usize]).unwrap_or(false);
                 if !allow {
                     return Err(AllocError::MultipleDefs { vreg: d });
                 }
-            }
-            if def_pos[d.0 as usize].is_none() {
+            } else {
                 def_pos[d.0 as usize] = Some(pos);
             }
             // A def is also a live position (even if never used).
             end_pos[d.0 as usize] = Some(end_pos[d.0 as usize].unwrap_or(pos).max(pos));
         }
+    }
+
+    // Pass 2: extend end positions for uses. This avoids false "use-before-def" in linear order
+    // due to loops/backedges, while still rejecting truly-undefined values.
+    for (pc, ins) in instrs.iter().enumerate() {
+        let pos = (pc as u32) * 2;
         for &u in &ins.uses {
             if u.0 >= num_vregs {
-                return Err(AllocError::VRegOutOfRange { vreg: u, vregs: num_vregs });
+                return Err(AllocError::VRegOutOfRange {
+                    vreg: u,
+                    vregs: num_vregs,
+                });
             }
-            let dpos = def_pos[u.0 as usize].ok_or(AllocError::UseBeforeDef { vreg: u })?;
-            let _ = dpos;
+            if def_pos[u.0 as usize].is_none() {
+                let allow_live_in = allow_multi_def.map(|a| a[u.0 as usize]).unwrap_or(false);
+                if allow_live_in {
+                    def_pos[u.0 as usize] = Some(0);
+                } else {
+                    return Err(AllocError::UsedButNeverDefined { vreg: u });
+                }
+            }
             let cur = end_pos[u.0 as usize].unwrap_or(pos);
             end_pos[u.0 as usize] = Some(cur.max(pos));
         }
@@ -91,7 +115,11 @@ pub fn build_intervals(
     for v in 0..num_vregs {
         if let Some(s) = def_pos[v as usize] {
             let e = end_pos[v as usize].ok_or(AllocError::IntervalInternalBug)?;
-            out.push(LiveInterval { vreg: VReg(v), start: s, end: e });
+            out.push(LiveInterval {
+                vreg: VReg(v),
+                start: s,
+                end: e,
+            });
         }
     }
     Ok(out)
@@ -99,33 +127,57 @@ pub fn build_intervals(
 
 /// Compute live intervals from an IR function (blocks in order).
 /// Useful for IR-level analysis. Phi nodes must be eliminated first.
+#[allow(dead_code)] // Alternative live-interval allocator path
 pub fn compute_live_intervals(func: &IrFunction) -> Result<Vec<LiveInterval>, AllocError> {
     let num_vregs = func.vreg_types.len() as u32;
     let instrs = linearize_to_instr_info(func);
     build_intervals(num_vregs, &instrs, None)
 }
 
+#[allow(dead_code)]
 fn op_to_instr_info(op: &IrOp) -> InstrInfo {
     let uses: Vec<VReg> = op.uses().iter().map(|v| VReg(v.0)).collect();
     let defs: Vec<VReg> = op.def().into_iter().map(|v| VReg(v.0)).collect();
     InstrInfo { uses, defs }
 }
 
+#[allow(dead_code)]
 fn term_to_instr_info(term: &IrTerminator) -> Vec<InstrInfo> {
     match term {
         IrTerminator::Ret { value } => vec![InstrInfo {
             uses: vec![VReg(value.0)],
             defs: vec![],
         }],
+        IrTerminator::TailCall {
+            callee,
+            arg_base,
+            nargs,
+            ..
+        } => {
+            let mut uses = vec![VReg(callee.0)];
+            for i in 0..(*nargs as u32) {
+                uses.push(VReg(arg_base.0 + i));
+            }
+            vec![InstrInfo {
+                uses,
+                defs: vec![],
+            }]
+        }
         IrTerminator::Jmp { .. } | IrTerminator::Unreachable => {
-            vec![InstrInfo { uses: vec![], defs: vec![] }]
+            vec![InstrInfo {
+                uses: vec![],
+                defs: vec![],
+            }]
         }
         IrTerminator::JmpIf { cond, .. } => vec![
             InstrInfo {
                 uses: vec![VReg(cond.0)],
                 defs: vec![],
             },
-            InstrInfo { uses: vec![], defs: vec![] },
+            InstrInfo {
+                uses: vec![],
+                defs: vec![],
+            },
         ],
         IrTerminator::SwitchKind { kind, cases, .. } => {
             let mut v = vec![InstrInfo {
@@ -133,7 +185,10 @@ fn term_to_instr_info(term: &IrTerminator) -> Vec<InstrInfo> {
                 defs: vec![],
             }];
             for _ in cases {
-                v.push(InstrInfo { uses: vec![], defs: vec![] });
+                v.push(InstrInfo {
+                    uses: vec![],
+                    defs: vec![],
+                });
             }
             v
         }
@@ -141,6 +196,7 @@ fn term_to_instr_info(term: &IrTerminator) -> Vec<InstrInfo> {
 }
 
 /// Linearize an IR function to a vector of instruction information.
+#[allow(dead_code)]
 fn linearize_to_instr_info(func: &IrFunction) -> Vec<InstrInfo> {
     let mut out = Vec::new();
     for block in &func.blocks {

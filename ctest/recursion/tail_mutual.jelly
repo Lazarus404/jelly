@@ -1,0 +1,11 @@
+// Tail call from f to g (non-self). Without VM-level tail call, deep recursion
+// would stack overflow. With proper tail calls, we replace the frame.
+let g: I32 -> I32 = fn(n) { return n };
+let f: I32 -> I32 = fn(n) {
+  return if (n == 0) { 0 } else { g(n - 1) };
+};
+
+let n: I32 = 10000;
+let r: I32 = f(n);
+System.assert(r == 9999);
+"ok"

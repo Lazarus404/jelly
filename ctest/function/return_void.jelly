@@ -1,0 +1,4 @@
+let f : I32 -> Any = fn(x) { return; };
+let z = f(1);
+System.assert(z == null);
+"ok"

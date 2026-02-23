@@ -194,159 +194,160 @@ typedef enum jelly_bc_feature_flags {
 } jelly_bc_feature_flags;
 
 typedef enum jelly_op {
-  JOP_NOP = 0,
   /* Control / misc */
+  JOP_NOP = 0,
   JOP_RET = 1,
-
-  /* Moves */
-  JOP_MOV = 2,
+  JOP_JMP = 2,
+  JOP_JMP_IF = 3,
+  JOP_MOV = 4,
+  JOP_TRY = 5,
+  JOP_ENDTRY = 6,
+  JOP_THROW = 7,
+  JOP_ASSERT = 8,
 
   /* Calls / closures */
-  JOP_CALL = 3,
-  JOP_CALLR = 4,
-  JOP_CONST_FUN = 5,
-  JOP_CLOSURE = 6,
-  JOP_BIND_THIS = 7,
+  JOP_CALL = 9,
+  JOP_CALLR = 10,
+  JOP_TAILCALL = 11,
+  JOP_TAILCALLR = 12,
+  JOP_CONST_FUN = 13,
+  JOP_CLOSURE = 14,
+  JOP_BIND_THIS = 15,
 
   /* Typed constants */
-  JOP_CONST_I32 = 8,
-  JOP_CONST_I8_IMM = 9,
-  JOP_CONST_BOOL = 10,
-  JOP_CONST_NULL = 11,
-  JOP_CONST_ATOM = 12,
-  JOP_CONST_F16 = 13,
-  JOP_CONST_F32 = 14,
-  JOP_CONST_I64 = 15,
-  JOP_CONST_F64 = 16,
-  JOP_CONST_BYTES = 17,
+  JOP_CONST_I32 = 16,
+  JOP_CONST_I8_IMM = 17,
+  JOP_CONST_BOOL = 18,
+  JOP_CONST_NULL = 19,
+  JOP_CONST_ATOM = 20,
+  JOP_CONST_F16 = 21,
+  JOP_CONST_F32 = 22,
+  JOP_CONST_I64 = 23,
+  JOP_CONST_F64 = 24,
+  JOP_CONST_BYTES = 25,
 
   /* Bytes helpers */
-  JOP_BYTES_CONCAT2 = 18,
-  JOP_BYTES_CONCAT_MANY = 19,
+  JOP_BYTES_CONCAT2 = 26,
+  JOP_BYTES_CONCAT_MANY = 27,
 
-  /* Control flow */
-  JOP_JMP = 20,
-  JOP_JMP_IF = 21,
+  /* I32 arithmetic */
+  JOP_ADD_I32 = 28,
+  JOP_SUB_I32 = 29,
+  JOP_MUL_I32 = 30,
+  JOP_DIV_I32 = 31,
+  JOP_MOD_I32 = 32,
+  JOP_SHL_I32 = 33,
+  JOP_SHR_I32 = 34,
+  JOP_ADD_I32_IMM = 35,
+  JOP_SUB_I32_IMM = 36,
+  JOP_MUL_I32_IMM = 37,
 
-  /* Exceptions */
-  JOP_TRY = 22,
-  JOP_ENDTRY = 23,
-  JOP_THROW = 24,
+  /* I64 arithmetic */
+  JOP_ADD_I64 = 38,
+  JOP_SUB_I64 = 39,
+  JOP_MUL_I64 = 40,
+  JOP_DIV_I64 = 41,
+  JOP_MOD_I64 = 42,
+  JOP_SHL_I64 = 43,
+  JOP_SHR_I64 = 44,
 
-  /* Debug */
-  JOP_ASSERT = 25,
-
-  /* Arithmetic (ints) */
-  JOP_ADD_I32 = 26,
-  JOP_SUB_I32 = 27,
-  JOP_MUL_I32 = 28,
-  JOP_DIV_I32 = 29,
-  JOP_ADD_I32_IMM = 30,
-  JOP_SUB_I32_IMM = 31,
-  JOP_MUL_I32_IMM = 32,
-  JOP_ADD_I64 = 33,
-  JOP_SUB_I64 = 34,
-  JOP_MUL_I64 = 35,
-  JOP_DIV_I64 = 36,
-
-  /* Arithmetic (floats) */
-  JOP_ADD_F16 = 37,
-  JOP_SUB_F16 = 38,
-  JOP_MUL_F16 = 39,
-  JOP_ADD_F32 = 40,
-  JOP_SUB_F32 = 41,
-  JOP_MUL_F32 = 42,
-  JOP_DIV_F32 = 43,
-  JOP_ADD_F64 = 44,
-  JOP_SUB_F64 = 45,
-  JOP_MUL_F64 = 46,
-  JOP_DIV_F64 = 47,
+  /* Float arithmetic */
+  JOP_ADD_F16 = 45,
+  JOP_SUB_F16 = 46,
+  JOP_MUL_F16 = 47,
+  JOP_ADD_F32 = 48,
+  JOP_SUB_F32 = 49,
+  JOP_MUL_F32 = 50,
+  JOP_DIV_F32 = 51,
+  JOP_ADD_F64 = 52,
+  JOP_SUB_F64 = 53,
+  JOP_MUL_F64 = 54,
+  JOP_DIV_F64 = 55,
 
   /* Unary */
-  JOP_NEG_I32 = 48,
-  JOP_NEG_I64 = 49,
-  JOP_NEG_F32 = 50,
-  JOP_NEG_F64 = 51,
-  JOP_NOT_BOOL = 52,
+  JOP_NEG_I32 = 56,
+  JOP_NEG_I64 = 57,
+  JOP_NEG_F32 = 58,
+  JOP_NEG_F64 = 59,
+  JOP_NOT_BOOL = 60,
 
   /* Comparisons */
-  JOP_EQ_I32 = 53,
-  JOP_LT_I32 = 54,
-  JOP_EQ_I32_IMM = 55,
-  JOP_LT_I32_IMM = 56,
-  JOP_EQ_I64 = 57,
-  JOP_EQ_F32 = 58,
-  JOP_EQ_F64 = 59,
-
-  /* Boxing/unboxing boundary + spill */
-  JOP_TO_DYN = 60,
-  JOP_FROM_DYN_I8 = 61,
-  JOP_FROM_DYN_I16 = 62,
-  JOP_FROM_DYN_I32 = 63,
-  JOP_FROM_DYN_I64 = 64,
-  JOP_FROM_DYN_F16 = 65,
-  JOP_FROM_DYN_F32 = 66,
-  JOP_FROM_DYN_F64 = 67,
-  JOP_FROM_DYN_BOOL = 68,
-  JOP_FROM_DYN_ATOM = 69,
-  JOP_FROM_DYN_PTR = 70,
-  JOP_SPILL_PUSH = 71,
-  JOP_SPILL_POP = 72,
+  JOP_EQ_I32 = 61,
+  JOP_LT_I32 = 62,
+  JOP_EQ_I32_IMM = 63,
+  JOP_LT_I32_IMM = 64,
+  JOP_EQ_I64 = 65,
+  JOP_LT_I64 = 66,
+  JOP_EQ_F32 = 67,
+  JOP_LT_F32 = 68,
+  JOP_EQ_F64 = 69,
+  JOP_LT_F64 = 70,
 
   /* Conversions / width changes */
-  JOP_SEXT_I64 = 73,
-  JOP_I32_FROM_I64 = 74,
-  JOP_F64_FROM_I32 = 75,
-  JOP_I32_FROM_F64 = 76,
-  JOP_F64_FROM_I64 = 77,
-  JOP_I64_FROM_F64 = 78,
-  JOP_F32_FROM_I32 = 79,
-  JOP_I32_FROM_F32 = 80,
-  JOP_F64_FROM_F32 = 81,
-  JOP_F32_FROM_F64 = 82,
-  JOP_F32_FROM_I64 = 83,
-  JOP_I64_FROM_F32 = 84,
-  JOP_SEXT_I16 = 85,
-  JOP_TRUNC_I8 = 86,
-  JOP_TRUNC_I16 = 87,
-  JOP_F16_FROM_F32 = 88,
-  JOP_F32_FROM_F16 = 89,
-  JOP_F16_FROM_I32 = 90,
-  JOP_I32_FROM_F16 = 91,
+  JOP_SEXT_I64 = 71,
+  JOP_SEXT_I16 = 72,
+  JOP_TRUNC_I8 = 73,
+  JOP_TRUNC_I16 = 74,
+  JOP_I32_FROM_I64 = 75,
+  JOP_F64_FROM_I32 = 76,
+  JOP_I32_FROM_F64 = 77,
+  JOP_F64_FROM_I64 = 78,
+  JOP_I64_FROM_F64 = 79,
+  JOP_F32_FROM_I32 = 80,
+  JOP_I32_FROM_F32 = 81,
+  JOP_F64_FROM_F32 = 82,
+  JOP_F32_FROM_F64 = 83,
+  JOP_F32_FROM_I64 = 84,
+  JOP_I64_FROM_F32 = 85,
+  JOP_F16_FROM_F32 = 86,
+  JOP_F32_FROM_F16 = 87,
+  JOP_F16_FROM_I32 = 88,
+  JOP_I32_FROM_F16 = 89,
 
-  /* Identity */
-  JOP_PHYSEQ = 92,
+  /* Boxing/unboxing boundary + spill */
+  JOP_TO_DYN = 90,
+  JOP_FROM_DYN_I8 = 91,
+  JOP_FROM_DYN_I16 = 92,
+  JOP_FROM_DYN_I32 = 93,
+  JOP_FROM_DYN_I64 = 94,
+  JOP_FROM_DYN_F16 = 95,
+  JOP_FROM_DYN_F32 = 96,
+  JOP_FROM_DYN_F64 = 97,
+  JOP_FROM_DYN_BOOL = 98,
+  JOP_FROM_DYN_ATOM = 99,
+  JOP_FROM_DYN_PTR = 100,
+  JOP_SPILL_PUSH = 101,
+  JOP_SPILL_POP = 102,
 
-  /* Match / type introspection */
-  JOP_KINDOF = 93,
-  JOP_SWITCH_KIND = 94,
-  JOP_CASE_KIND = 95,
+  /* Identity / type introspection */
+  JOP_PHYSEQ = 103,
+  JOP_KINDOF = 104,
+  JOP_SWITCH_KIND = 105,
+  JOP_CASE_KIND = 106,
 
   /* Containers */
-  JOP_LIST_NIL = 96,
-  JOP_LIST_CONS = 97,
-  JOP_LIST_HEAD = 98,
-  JOP_LIST_TAIL = 99,
-  JOP_LIST_IS_NIL = 100,
-  JOP_ARRAY_NEW = 101,
-  JOP_ARRAY_LEN = 102,
-  JOP_ARRAY_GET = 103,
-  JOP_ARRAY_SET = 104,
-  JOP_BYTES_NEW = 105,
-  JOP_BYTES_LEN = 106,
-  JOP_BYTES_GET_U8 = 107,
-  JOP_BYTES_SET_U8 = 108,
-  JOP_OBJ_NEW = 109,
-  JOP_OBJ_HAS_ATOM = 110,
-  JOP_OBJ_GET_ATOM = 111,
-  JOP_OBJ_SET_ATOM = 112,
-  JOP_OBJ_GET = 113,
-  JOP_OBJ_SET = 114,
-  /* Comparisons (extended) */
-  JOP_LT_I64 = 115,
-  JOP_LT_F32 = 116,
-  JOP_LT_F64 = 117,
+  JOP_LIST_NIL = 107,
+  JOP_LIST_CONS = 108,
+  JOP_LIST_HEAD = 109,
+  JOP_LIST_TAIL = 110,
+  JOP_LIST_IS_NIL = 111,
+  JOP_ARRAY_NEW = 112,
+  JOP_ARRAY_LEN = 113,
+  JOP_ARRAY_GET = 114,
+  JOP_ARRAY_SET = 115,
+  JOP_BYTES_NEW = 116,
+  JOP_BYTES_LEN = 117,
+  JOP_BYTES_GET_U8 = 118,
+  JOP_BYTES_SET_U8 = 119,
+  JOP_OBJ_NEW = 120,
+  JOP_OBJ_HAS_ATOM = 121,
+  JOP_OBJ_GET_ATOM = 122,
+  JOP_OBJ_SET_ATOM = 123,
+  JOP_OBJ_GET = 124,
+  JOP_OBJ_SET = 125,
 } jelly_op;
+
+#define JOP_COUNT (JOP_OBJ_SET + 1)
 
 #define JELLY_ATOM___PROTO__ 0u
 #define JELLY_ATOM_INIT 1u
@@ -388,6 +389,7 @@ typedef struct jelly_bc_result {
 
 jelly_bc_result jelly_bc_read(const uint8_t* data, size_t size, jelly_bc_module** out);
 void jelly_bc_free(jelly_bc_module* m);
+uint32_t jelly_bc_get_entry(const jelly_bc_module* m);
 
 /* --- vm.h --- */
 typedef enum jelly_exec_status {
@@ -415,9 +417,22 @@ size_t jelly_slot_align(jelly_type_kind k);
 size_t jelly_slot_size(jelly_type_kind k);
 jelly_value jelly_vm_exec(jelly_vm* vm, const jelly_bc_module* m);
 jelly_exec_status jelly_vm_exec_status(jelly_vm* vm, const jelly_bc_module* m, jelly_value* out);
+/** REPL: run module and optionally capture the entry module's exports object.
+ *  entry_module_idx: which module's exports to capture (0 for single module, 1 for [prior,new]).
+ *  out_exports: if non-NULL, receives the exports object (for next incremental run). */
+jelly_exec_status jelly_vm_exec_status_exports(jelly_vm* vm, const jelly_bc_module* m,
+    uint32_t entry_module_idx, jelly_value* out, jelly_value* out_exports);
+/** Phase 4: run a specific function with pre-bound args (chunk exec).
+ *  entry_func_index: which function to run. args/nargs: initial reg 0..nargs-1.
+ *  out_exports: if non-NULL and entry_module_idx != UINT32_MAX, capture reg[entry_module_idx] on return. */
+jelly_exec_status jelly_vm_exec_status_chunk(jelly_vm* vm, const jelly_bc_module* m,
+    uint32_t entry_func_index, const jelly_value* args, uint32_t nargs,
+    uint32_t entry_module_idx, jelly_value* out, jelly_value* out_exports);
 void jelly_vm_clear_trap(jelly_vm* vm);
 jelly_trap_code jelly_vm_last_trap_code(const jelly_vm* vm);
 const char* jelly_vm_last_trap_msg(const jelly_vm* vm);
+/** REPL: invalidate frame cache after freeing bytecode module (avoids dangling frame_layouts_mod). */
+void jelly_vm_invalidate_frame_cache(jelly_vm* vm);
 
 /* --- safety limits (optional) --- */
 /* Fuel (instruction budget): 0 disables. If enabled, fuel is reset per exec(). */
@@ -476,11 +491,15 @@ typedef struct jelly_function {
   uint32_t func_index;
   uint32_t ncaps;
   jelly_value bound_this;
-  jelly_value caps[];
+  uint8_t caps_are_raw;   /* 1 if trailing bytes are raw (no GC roots), 0 if jelly_value[] */
+  uint8_t _pad[3];
+  uint32_t raw_cap_size; /* when caps_are_raw: total bytes of raw capture data */
+  jelly_value caps[];   /* when !caps_are_raw; when caps_are_raw, raw bytes at same offset */
 } jelly_function;
 
 jelly_function* jelly_function_new(struct jelly_vm* vm, uint32_t type_id, uint32_t func_index);
 jelly_function* jelly_closure_new(struct jelly_vm* vm, uint32_t type_id, uint32_t func_index, uint32_t ncaps, const jelly_value* caps);
+jelly_function* jelly_closure_new_raw(struct jelly_vm* vm, uint32_t type_id, uint32_t func_index, uint32_t ncaps, uint32_t raw_cap_size, const uint8_t* raw_caps);
 jelly_function* jelly_function_bind_this(struct jelly_vm* vm, uint32_t type_id, const jelly_function* f, jelly_value bound_this);
 
 /* --- abstract.h --- */

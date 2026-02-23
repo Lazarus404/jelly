@@ -1,0 +1,8 @@
+let a : i32 = 256;
+let b : Array<I32> = [a];
+let c : Array<I32> -> I32 = fn(arr) { return arr[0]; };
+b[0] = 1024;
+let d : Object = {a: a, b: b};
+let e : Bool = false;
+let f : Any = null;
+"ok"

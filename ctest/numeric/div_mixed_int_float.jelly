@@ -1,0 +1,8 @@
+// Mixed int+float: / yields float division
+let i : I32 = 10;
+let f : F64 = 4.0;
+let c : F64 = i / f;
+System.assert(c == 2.5);
+let c2 : F64 = f / i;
+System.assert(c2 == 0.4);
+"ok"

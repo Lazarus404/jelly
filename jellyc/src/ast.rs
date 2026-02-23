@@ -27,7 +27,13 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+// used to track the location of the node in the source code.
+// it is a pair of byte offsets, inclusive and exclusive.
+// for example, the span of the string "hello" is 0..5.
+// the start offset is inclusive, the end offset is exclusive.
+// the start offset is the byte offset of the first character of the node.
+// the end offset is the byte offset of the character after the last character of the node.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Span {
     pub start: usize, // byte offset (inclusive)
     pub end: usize,   // byte offset (exclusive)
@@ -43,6 +49,8 @@ impl Span {
     }
 }
 
+// a wrapper around a node that contains the node and the span of the node.
+// T, for instance, can be a TyKind, ExprKind, StmtKind, etc.
 #[derive(Clone, Debug)]
 pub struct Spanned<T> {
     pub node: T,
@@ -55,6 +63,41 @@ impl<T> Spanned<T> {
     }
 }
 
+// macro that defines the AST nodes for the language.
+macro_rules! define_ast {
+    (
+        constructors {
+            $(
+                $ctor:ident : $kind:ident
+            ),+ $(,)?
+        }
+    ) => {
+        // Typed constructors for spanned AST nodes.
+        // This is a convenience module: it keeps call sites concise when constructing AST
+        // nodes in tests/tools, while preserving the core representation as `Spanned<T>`.
+        #[allow(dead_code)]
+        pub mod mk {
+            use super::{Span, Spanned, $($kind),+};
+
+            $(
+                pub fn $ctor(node: $kind, span: Span) -> Spanned<$kind> {
+                    Spanned::new(node, span)
+                }
+            )+
+        }
+    };
+}
+
+// define the AST nodes for the language.
+define_ast! {
+    constructors {
+        ty: TyKind,
+        expr: ExprKind,
+        pattern: PatternKind,
+        stmt: StmtKind,
+    }
+}
+
 pub type Ty = Spanned<TyKind>;
 
 #[derive(Clone, Debug)]
@@ -62,6 +105,7 @@ pub enum TyKind {
     Named(String),
     Generic { base: String, args: Vec<Ty> },
     Fun { args: Vec<Ty>, ret: Box<Ty> },
+    #[allow(dead_code)] // Reserved for tuple type support
     Tuple(Vec<Ty>),
 }
 
@@ -87,9 +131,15 @@ pub enum PatternKind {
     /// Array pattern: exact length match `[p0, p1, ...]`.
     ArrayExact(Vec<Pattern>),
     /// Array head/tail match: `[head | rest]`.
-    ArrayHeadTail { head: Box<Pattern>, rest: String },
+    ArrayHeadTail {
+        head: Box<Pattern>,
+        rest: String,
+    },
     /// Array prefix/rest match: `[p0, p1, ..., ...rest]`.
-    ArrayPrefixRest { prefix: Vec<Pattern>, rest: String },
+    ArrayPrefixRest {
+        prefix: Vec<Pattern>,
+        rest: String,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -116,7 +166,10 @@ pub enum ExprKind {
     Null,
     Var(String),
     /// Member access (currently used for namespaced builtins, eg `Bytes.get_u8`).
-    Member { base: Box<Expr>, name: String },
+    Member {
+        base: Box<Expr>,
+        name: String,
+    },
     /// Function call; `type_args` are optional generic type parameters (eg `Array.new<I32>(3)`).
     Call {
         callee: Box<Expr>,
@@ -125,21 +178,44 @@ pub enum ExprKind {
     },
     /// Type application / specialization: `Name<T1, T2>`.
     /// This is compile-time only today (used for template expansion).
-    TypeApp { base: Box<Expr>, type_args: Vec<Ty> },
+    TypeApp {
+        base: Box<Expr>,
+        type_args: Vec<Ty>,
+    },
     ArrayLit(Vec<Expr>),
     TupleLit(Vec<Expr>),
     ObjLit(Vec<(String, Expr)>),
-    Index { base: Box<Expr>, index: Box<Expr> },
+    Index {
+        base: Box<Expr>,
+        index: Box<Expr>,
+    },
+    /// Index assignment as expression: `a[i] = val` returns the assigned value.
+    IndexAssign {
+        base: Box<Expr>,
+        index: Box<Expr>,
+        expr: Box<Expr>,
+    },
     Fn {
         params: Vec<(String, Option<Ty>)>,
         body: Vec<Stmt>,
         tail: Option<Box<Expr>>,
     },
+    /// Truthiness check.
+    ///
+    /// Semantic normalization can introduce this node to encode:
+    /// - falsey = `null` or `false`
+    /// - truthy = everything else
+    ///
+    /// The parser does not produce this directly.
+    Truthy(Box<Expr>),
     Not(Box<Expr>),
     Add(Box<Expr>, Box<Expr>),
     Sub(Box<Expr>, Box<Expr>),
     Mul(Box<Expr>, Box<Expr>),
     Div(Box<Expr>, Box<Expr>),
+    Mod(Box<Expr>, Box<Expr>),
+    Shl(Box<Expr>, Box<Expr>),
+    Shr(Box<Expr>, Box<Expr>),
     Neg(Box<Expr>),
     Eq(Box<Expr>, Box<Expr>),
     Ne(Box<Expr>, Box<Expr>),
@@ -158,6 +234,14 @@ pub enum ExprKind {
         stmts: Vec<Stmt>,
         expr: Box<Expr>,
     },
+    /// Let as expression: `let x = e` evaluates to `e` and binds `x` in the surrounding scope.
+    Let {
+        is_const: bool,
+        name: String,
+        type_params: Vec<String>,
+        ty: Option<Ty>,
+        expr: Box<Expr>,
+    },
     Try {
         body: Box<Expr>,
         catch_name: Option<String>,
@@ -167,11 +251,28 @@ pub enum ExprKind {
         subject: Box<Expr>,
         arms: Vec<MatchArm>,
     },
+    /// Elixir-style chained pattern matching. `with pat1 <- expr1, pat2 <- expr2 { body } else { arms }`
+    With {
+        clauses: Vec<(Pattern, Expr)>,
+        body: Box<Expr>,
+        else_arms: Option<Vec<MatchArm>>,
+    },
     /// Prototypal instantiation (MVP): `new <proto>(args...)`.
     /// Lowers to: allocate fresh object, attach `__proto__`, optionally call `init(self, ...args)`.
     New {
         proto: Box<Expr>,
         args: Vec<Expr>,
+    },
+    /// Assignment as expression: `x = e` evaluates to the assigned value (e).
+    Assign {
+        name: String,
+        expr: Box<Expr>,
+    },
+    /// Member assignment as expression: `obj.field = e` evaluates to the assigned value (e).
+    MemberAssign {
+        base: Box<Expr>,
+        name: String,
+        expr: Box<Expr>,
     },
 }
 
@@ -180,6 +281,7 @@ pub type Stmt = Spanned<StmtKind>;
 #[derive(Clone, Debug)]
 pub enum StmtKind {
     Let {
+        is_const: bool,
         exported: bool,
         name: String,
         /// Compile-time template parameters: `let Name<T, U> = ...;`
@@ -198,23 +300,46 @@ pub enum StmtKind {
         type_params: Vec<String>,
         fields: Vec<(String, Expr)>,
     },
-    ImportModule { path: Vec<String>, alias: String },
+    ImportModule {
+        path: Vec<String>,
+        alias: String,
+    },
     ImportFrom {
         /// If true, this imports types only (reserved; user-defined types not implemented yet).
         type_only: bool,
         items: Vec<(String, Option<String>)>, // (name, alias)
         from: Vec<String>,                    // dotted module path
     },
-    Assign { name: String, expr: Expr },
-    MemberAssign { base: Expr, name: String, expr: Expr },
-    IndexAssign { base: Expr, index: Expr, expr: Expr },
-    While { cond: Expr, body: Vec<Stmt> },
+    Assign {
+        name: String,
+        expr: Expr,
+    },
+    MemberAssign {
+        base: Expr,
+        name: String,
+        expr: Expr,
+    },
+    IndexAssign {
+        base: Expr,
+        index: Expr,
+        expr: Expr,
+    },
+    While {
+        cond: Expr,
+        body: Vec<Stmt>,
+    },
     Break,
     Continue,
-    Throw { expr: Expr },
-    Return { expr: Option<Expr> },
+    Throw {
+        expr: Expr,
+    },
+    Return {
+        expr: Option<Expr>,
+    },
     /// Expression statement: `expr;` (value discarded).
-    Expr { expr: Expr },
+    Expr {
+        expr: Expr,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -222,4 +347,3 @@ pub struct Program {
     pub stmts: Vec<Stmt>,
     pub expr: Expr,
 }
-

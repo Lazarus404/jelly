@@ -43,21 +43,21 @@ op_result op_obj_new(exec_ctx* ctx, const jelly_insn* ins) {
 }
 
 op_result op_obj_has_atom(exec_ctx* ctx, const jelly_insn* ins) {
+  jelly_vm* vm = ctx->vm;
   call_frame* fr = ctx->fr;
 
   jelly_object* o = (jelly_object*)vm_load_ptr(&fr->rf, ins->b);
-  if(!o) jelly_vm_panic();
+  if(!o) {
+    (void)jelly_vm_trap(vm, JELLY_TRAP_NULL_DEREF, "obj_has_atom on null");
+    return OP_CONTINUE;
+  }
   int has = jelly_object_has(o, ins->imm);
   vm_store_u32(&fr->rf, ins->a, (uint32_t)(has != 0));
   return OP_CONTINUE;
 }
 
 static void obj_update_proto_cache(jelly_object* o, jelly_value v, const jelly_bc_module* m) {
-  int proto_enabled = 0;
-  if(m->natoms > JELLY_ATOM___PROTO__ && m->atoms[JELLY_ATOM___PROTO__]) {
-    proto_enabled = (strcmp(m->atoms[JELLY_ATOM___PROTO__], "__proto__") == 0);
-  }
-  if(!proto_enabled) return;
+  if(!m->proto_enabled) return;
   if(jelly_is_ptr(v)) {
     void* p = jelly_as_ptr(v);
     if(p) {
@@ -82,14 +82,13 @@ op_result op_obj_get_atom(exec_ctx* ctx, const jelly_insn* ins) {
   call_frame* fr = ctx->fr;
 
   jelly_object* o = (jelly_object*)vm_load_ptr(&fr->rf, ins->b);
-  if(!o) jelly_vm_panic();
+  if(!o) {
+    (void)jelly_vm_trap(vm, JELLY_TRAP_NULL_DEREF, "obj_get_atom on null");
+    return OP_CONTINUE;
+  }
   uint32_t atom_id = ins->imm;
 
-  int proto_enabled = 0;
-  if(m->natoms > JELLY_ATOM___PROTO__ && m->atoms[JELLY_ATOM___PROTO__]) {
-    proto_enabled = (strcmp(m->atoms[JELLY_ATOM___PROTO__], "__proto__") == 0);
-  }
-  if(!proto_enabled) {
+  if(!m->proto_enabled) {
     jelly_value v = jelly_object_get(o, atom_id);
     vm_store_from_boxed(m, f, &fr->rf, ins->a, v);
     return OP_CONTINUE;
@@ -149,11 +148,7 @@ op_result op_obj_get(exec_ctx* ctx, const jelly_insn* ins) {
     (void)jelly_vm_trap(vm, JELLY_TRAP_BOUNDS, "obj_get atom id out of range");
     return OP_CONTINUE;
   }
-  int proto_enabled = 0;
-  if(m->natoms > JELLY_ATOM___PROTO__ && m->atoms[JELLY_ATOM___PROTO__]) {
-    proto_enabled = (strcmp(m->atoms[JELLY_ATOM___PROTO__], "__proto__") == 0);
-  }
-  if(!proto_enabled) {
+  if(!m->proto_enabled) {
     jelly_value v = jelly_object_get(o, atom_id);
     vm_store_from_boxed(m, f, &fr->rf, ins->a, v);
     return OP_CONTINUE;

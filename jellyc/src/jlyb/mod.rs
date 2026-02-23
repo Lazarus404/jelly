@@ -26,11 +26,12 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  */
-
- mod ast_backend;
 mod format;
 mod prelude;
+mod validate;
 
-pub use ast_backend::build_program_module;
 pub use format::*;
 pub use prelude::{build_prelude_module, prelude_funcs_for_program, prelude_funcs_for_used};
+pub use validate::validate_module;
+#[cfg(test)]
+pub use validate::validate_module_strict;

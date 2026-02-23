@@ -29,14 +29,19 @@
 
 // Prelude module: hand-coded bytecode for built-in functions.
 // Keep aligned with TypeCtx::new_program_base() and format constants.
-
 use crate::typectx::{TypeCtx, T_ARRAY_BYTES, T_BOOL, T_BYTES, T_I32};
 
 use super::{Function, Insn, Module, Op, PRELUDE_FUN_COUNT};
 
 #[inline]
 fn ins(op: Op, a: u8, b: u8, c: u8, imm: u32) -> Insn {
-    Insn { op: op as u8, a, b, c, imm }
+    Insn {
+        op: op as u8,
+        a,
+        b,
+        c,
+        imm,
+    }
 }
 
 #[inline]
@@ -121,21 +126,25 @@ fn bytes_set_u8(value: u8, dst: u8, idx: u8) -> Insn {
 }
 
 #[inline]
+#[allow(dead_code)] // Reserved for f64 prelude support
 fn const_f64(dst: u8, pool_idx: u32) -> Insn {
     ins(Op::ConstF64, dst, 0, 0, pool_idx)
 }
 
 #[inline]
+#[allow(dead_code)] // Reserved for f64 prelude support
 fn add_f64(dst: u8, a: u8, b: u8) -> Insn {
     ins(Op::AddF64, dst, a, b, 0)
 }
 
 #[inline]
+#[allow(dead_code)] // Reserved for f64 prelude support
 fn mul_f64(dst: u8, a: u8, b: u8) -> Insn {
     ins(Op::MulF64, dst, a, b, 0)
 }
 
 #[inline]
+#[allow(dead_code)] // Reserved for f64 prelude support
 fn div_f64(dst: u8, a: u8, b: u8) -> Insn {
     ins(Op::DivF64, dst, a, b, 0)
 }
@@ -145,18 +154,14 @@ pub fn build_prelude_module() -> Module {
     let types = type_ctx.types.clone();
     let sigs = type_ctx.sigs.clone();
 
-    let mut const_f64 = vec![0.5];
+    let const_f64 = vec![0.5];
     let mut funcs = prelude_funcs_for_program();
 
     // fun2: __prelude_smoke() -> bytes  (entry)
     let f2 = Function {
         reg_types: vec![T_BYTES, T_I32],
         cap_start: 0,
-        insns: vec![
-            const_i32(1, 0),
-            bytes_new(0, 1),
-            ret(0),
-        ],
+        insns: vec![const_i32(1, 0), bytes_new(0, 1), ret(0)],
     };
     funcs.push(f2);
 
@@ -186,19 +191,13 @@ pub fn prelude_funcs_for_used(used: &[u32]) -> Vec<Function> {
     let f0 = Function {
         reg_types: vec![T_BYTES, T_BYTES, T_BYTES],
         cap_start: 0,
-        insns: vec![
-            bytes_concat2(2, 0, 1),
-            ret(2),
-        ],
+        insns: vec![bytes_concat2(2, 0, 1), ret(2)],
     };
 
     let f1 = Function {
         reg_types: vec![T_ARRAY_BYTES, T_BYTES],
         cap_start: 0,
-        insns: vec![
-            bytes_concat_many(1, 0),
-            ret(1),
-        ],
+        insns: vec![bytes_concat_many(1, 0), ret(1)],
     };
 
     // bytes_slice(bytes, start, len) -> bytes
@@ -214,7 +213,9 @@ pub fn prelude_funcs_for_used(used: &[u32]) -> Vec<Function> {
     const SLICE_I_NEXT: u8 = 9;
 
     let f2 = Function {
-        reg_types: vec![T_BYTES, T_I32, T_I32, T_BYTES, T_I32, T_BOOL, T_I32, T_I32, T_I32, T_I32],
+        reg_types: vec![
+            T_BYTES, T_I32, T_I32, T_BYTES, T_I32, T_BOOL, T_I32, T_I32, T_I32, T_I32,
+        ],
         cap_start: 0,
         insns: vec![
             bytes_new(SLICE_OUT, SLICE_LEN),
@@ -222,7 +223,7 @@ pub fn prelude_funcs_for_used(used: &[u32]) -> Vec<Function> {
             const_i32(SLICE_ONE, 1),
             lt_i32(SLICE_I_LT_LEN, SLICE_I, SLICE_LEN),
             jmp_if(SLICE_I_LT_LEN, 1), // to loop body
-            jmp(6),                // to return
+            jmp(6),                    // to return
             add_i32(SLICE_SRC_IDX, SLICE_START, SLICE_I),
             bytes_get_u8(SLICE_BYTE, SLICE_IN, SLICE_SRC_IDX),
             bytes_set_u8(SLICE_BYTE, SLICE_OUT, SLICE_I),

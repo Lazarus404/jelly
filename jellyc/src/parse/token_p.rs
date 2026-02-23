@@ -26,9 +26,7 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  */
-
 // Token-based parser state (peek, bump, expect over tokens).
-
 use crate::ast::Span;
 use crate::error::{CompileError, ErrorKind};
 use crate::token::{Token, TokenKind};
@@ -93,6 +91,7 @@ impl TokenP {
         Err(CompileError::at(ErrorKind::Parse, self.pos(), msg))
     }
 
+    #[allow(dead_code)]
     pub fn err_at<T>(&self, at: usize, msg: impl Into<String>) -> Result<T, CompileError> {
         Err(CompileError::at(ErrorKind::Parse, at, msg))
     }
@@ -137,12 +136,11 @@ impl TokenP {
 
     /// Parse identifier or keyword as a name (for member access, e.g Bytes.new).
     pub fn parse_ident_or_keyword(&mut self) -> Result<String, CompileError> {
-        let t = self.bump().ok_or_else(|| {
-            CompileError::at(ErrorKind::Parse, self.pos(), "expected identifier")
-        })?;
-        t.ident_or_keyword_str().ok_or_else(|| {
-            CompileError::at(ErrorKind::Parse, t.span.start, "expected identifier")
-        })
+        let t = self
+            .bump()
+            .ok_or_else(|| CompileError::at(ErrorKind::Parse, self.pos(), "expected identifier"))?;
+        t.ident_or_keyword_str()
+            .ok_or_else(|| CompileError::at(ErrorKind::Parse, t.span.start, "expected identifier"))
     }
 
     pub fn expect_bytes_lit(&mut self) -> Result<Vec<u8>, CompileError> {
@@ -153,6 +151,7 @@ impl TokenP {
         }
     }
 
+    #[allow(dead_code)]
     pub fn expect_i32_lit(&mut self) -> Result<i32, CompileError> {
         let t = self.expect(TokenKind::I32Lit(0))?;
         match t.kind {
@@ -194,6 +193,7 @@ impl TokenP {
             self.peek_kind(),
             Some(TokenKind::Ident(_))
                 | Some(TokenKind::KwLet)
+                | Some(TokenKind::KwConst)
                 | Some(TokenKind::KwIf)
                 | Some(TokenKind::KwElse)
                 | Some(TokenKind::KwWhile)
@@ -207,6 +207,7 @@ impl TokenP {
                 | Some(TokenKind::KwFn)
                 | Some(TokenKind::KwMatch)
                 | Some(TokenKind::KwWhen)
+                | Some(TokenKind::KwWith)
                 | Some(TokenKind::KwPrototype)
                 | Some(TokenKind::KwImport)
                 | Some(TokenKind::KwExport)
@@ -252,6 +253,7 @@ fn char_to_token_kind(c: char) -> TokenKind {
 fn kw_to_token_kind(kw: &str) -> Option<TokenKind> {
     Some(match kw {
         "let" => TokenKind::KwLet,
+        "const" => TokenKind::KwConst,
         "if" => TokenKind::KwIf,
         "else" => TokenKind::KwElse,
         "while" => TokenKind::KwWhile,
@@ -265,6 +267,7 @@ fn kw_to_token_kind(kw: &str) -> Option<TokenKind> {
         "fn" => TokenKind::KwFn,
         "match" => TokenKind::KwMatch,
         "when" => TokenKind::KwWhen,
+        "with" => TokenKind::KwWith,
         "prototype" => TokenKind::KwPrototype,
         "import" => TokenKind::KwImport,
         "export" => TokenKind::KwExport,

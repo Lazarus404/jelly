@@ -30,7 +30,6 @@
 /// Post-allocation peephole cleanup.
 /// Removes redundant moves (mov rX, rX), dead jumps, same-target branches,
 /// and updates jump targets.
-
 use crate::jlyb::{Insn, Op};
 
 const OP_MOV: u8 = Op::Mov as u8;
@@ -58,6 +57,8 @@ const OP_ENDTRY: u8 = Op::EndTry as u8;
 const OP_CONST_FUN: u8 = Op::ConstFun as u8;
 const OP_CALL: u8 = Op::Call as u8;
 const OP_CALLR: u8 = Op::CallR as u8;
+const OP_TAILCALL: u8 = Op::TailCall as u8;
+const OP_TAILCALLR: u8 = Op::TailCallR as u8;
 
 const OP_BYTES_SET_U8: u8 = Op::BytesSetU8 as u8;
 const OP_ARRAY_SET: u8 = Op::ArraySet as u8;
@@ -75,7 +76,8 @@ pub fn peephole(insns: &[Insn]) -> Vec<Insn> {
         // Most ops write `a` as the destination. Keep this conservative:
         // if we're not sure, treat it as writing (it only reduces folding).
         match op {
-            OP_RET | OP_JMP | OP_JMPIF | OP_THROW | OP_ASSERT | OP_ENDTRY | OP_SWITCH_KIND | OP_CASE_KIND | OP_TRY => false,
+            OP_RET | OP_JMP | OP_JMPIF | OP_THROW | OP_ASSERT | OP_ENDTRY | OP_SWITCH_KIND
+            | OP_CASE_KIND | OP_TRY | OP_TAILCALL | OP_TAILCALLR => false,
             OP_BYTES_SET_U8 | OP_ARRAY_SET | OP_OBJ_SET_ATOM | OP_OBJ_SET | OP_SPILL_PUSH => false,
             _ => true,
         }
@@ -118,6 +120,19 @@ pub fn peephole(insns: &[Insn]) -> Vec<Insn> {
                     });
                 }
             }
+            if ins.op == OP_TAILCALLR {
+                let callee_r = ins.b as usize;
+                if let Some(fi) = const_fun_for_reg.get(callee_r).and_then(|x| *x) {
+                    let arg_base = ins.imm as u8;
+                    replacement[pc] = Some(Insn {
+                        op: OP_TAILCALL,
+                        a: ins.a,
+                        b: arg_base,
+                        c: ins.c,
+                        imm: fi,
+                    });
+                }
+            }
         }
     }
 
@@ -139,19 +154,43 @@ pub fn peephole(insns: &[Insn]) -> Vec<Insn> {
         // Folding when const is left (a.b) would turn "0 < x" into "x < 0" which is wrong.
         let (imm_op, src_reg, imm_byte) = match a.op {
             OP_ADD_I32 => {
-                let (sr, ib) = if a.b == const_reg { (a.c, imm_i32 as u8) } else if a.c == const_reg { (a.b, imm_i32 as u8) } else { continue };
+                let (sr, ib) = if a.b == const_reg {
+                    (a.c, imm_i32 as u8)
+                } else if a.c == const_reg {
+                    (a.b, imm_i32 as u8)
+                } else {
+                    continue;
+                };
                 (OP_ADD_I32_IMM, sr, ib)
             }
             OP_SUB_I32 => {
-                let (sr, ib) = if a.b == const_reg { (a.c, imm_i32 as u8) } else if a.c == const_reg { (a.b, imm_i32 as u8) } else { continue };
+                let (sr, ib) = if a.b == const_reg {
+                    (a.c, imm_i32 as u8)
+                } else if a.c == const_reg {
+                    (a.b, imm_i32 as u8)
+                } else {
+                    continue;
+                };
                 (OP_SUB_I32_IMM, sr, ib)
             }
             OP_MUL_I32 => {
-                let (sr, ib) = if a.b == const_reg { (a.c, imm_i32 as u8) } else if a.c == const_reg { (a.b, imm_i32 as u8) } else { continue };
+                let (sr, ib) = if a.b == const_reg {
+                    (a.c, imm_i32 as u8)
+                } else if a.c == const_reg {
+                    (a.b, imm_i32 as u8)
+                } else {
+                    continue;
+                };
                 (OP_MUL_I32_IMM, sr, ib)
             }
             OP_EQ_I32 => {
-                let (sr, ib) = if a.b == const_reg { (a.c, imm_i32 as u8) } else if a.c == const_reg { (a.b, imm_i32 as u8) } else { continue };
+                let (sr, ib) = if a.b == const_reg {
+                    (a.c, imm_i32 as u8)
+                } else if a.c == const_reg {
+                    (a.b, imm_i32 as u8)
+                } else {
+                    continue;
+                };
                 (OP_EQ_I32_IMM, sr, ib)
             }
             OP_LT_I32 => {
@@ -190,7 +229,6 @@ pub fn peephole(insns: &[Insn]) -> Vec<Insn> {
         });
     }
 
-
     // Mark dead jumps (Jmp to next instruction).
     let n = insns.len();
     for (pc, ins) in insns.iter().enumerate() {
@@ -228,7 +266,8 @@ pub fn peephole(insns: &[Insn]) -> Vec<Insn> {
 
         // Combine: JmpIf with same then/else target -> Jmp (unconditional)
         // JmpIf at pc is followed by Jmp at pc+1; else_target = where that Jmp goes
-        if i.op == OP_JMPIF && old_pc + 1 < n && keep[old_pc + 1] && insns[old_pc + 1].op == OP_JMP {
+        if i.op == OP_JMPIF && old_pc + 1 < n && keep[old_pc + 1] && insns[old_pc + 1].op == OP_JMP
+        {
             let then_target = (old_pc as i32 + 1) + (i.imm as i32);
             let else_target = (old_pc as i32 + 2) + (insns[old_pc + 1].imm as i32);
             if then_target >= 0 && (then_target as usize) <= n && then_target == else_target {
@@ -242,7 +281,9 @@ pub fn peephole(insns: &[Insn]) -> Vec<Insn> {
             x if x == OP_JMP => {
                 let mut old_target = (old_pc as i32 + 1) + (i.imm as i32);
                 // Branch threading: follow Jmp -> Jmp chains
-                while old_target >= 0 && (old_target as usize) < n && keep[old_target as usize]
+                while old_target >= 0
+                    && (old_target as usize) < n
+                    && keep[old_target as usize]
                     && insns[old_target as usize].op == OP_JMP
                 {
                     let next = (old_target + 1) as i32 + (insns[old_target as usize].imm as i32);
@@ -255,7 +296,9 @@ pub fn peephole(insns: &[Insn]) -> Vec<Insn> {
             }
             x if x == OP_JMPIF => {
                 let mut old_target = (old_pc as i32 + 1) + (i.imm as i32);
-                while old_target >= 0 && (old_target as usize) < n && keep[old_target as usize]
+                while old_target >= 0
+                    && (old_target as usize) < n
+                    && keep[old_target as usize]
                     && insns[old_target as usize].op == OP_JMP
                 {
                     let next = (old_target + 1) as i32 + (insns[old_target as usize].imm as i32);
@@ -268,7 +311,9 @@ pub fn peephole(insns: &[Insn]) -> Vec<Insn> {
             }
             x if x == OP_TRY => {
                 let mut old_target = (old_pc as i32 + 1) + (i.imm as i32);
-                while old_target >= 0 && (old_target as usize) < n && keep[old_target as usize]
+                while old_target >= 0
+                    && (old_target as usize) < n
+                    && keep[old_target as usize]
                     && insns[old_target as usize].op == OP_JMP
                 {
                     let next = (old_target + 1) as i32 + (insns[old_target as usize].imm as i32);
@@ -314,32 +359,4 @@ fn is_redundant_mov(i: &Insn) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn folds_const_i32_lt_to_imm_until_overwrite() {
-        // Pattern like fib:
-        //   r2 = 2
-        //   r1 = (r0 < r2)
-        //   ...
-        //   r2 = <something else>   // overwrite -> later uses of r2 should not block folding
-        let insns = vec![
-            Insn { op: OP_CONST_I32, a: 2, b: 0, c: 0, imm: 2 },
-            Insn { op: OP_LT_I32, a: 1, b: 0, c: 2, imm: 0 },
-            Insn { op: OP_JMPIF, a: 1, b: 0, c: 0, imm: 1 },
-            Insn { op: OP_JMP, a: 0, b: 0, c: 0, imm: 1 },
-            Insn { op: OP_RET, a: 0, b: 0, c: 0, imm: 0 },
-            // overwrite r2
-            Insn { op: OP_CONST_I32, a: 2, b: 0, c: 0, imm: 123 },
-            // later "use" of r2 after overwrite should not block folding
-            Insn { op: OP_ADD_I32, a: 4, b: 2, c: 0, imm: 0 },
-        ];
-        let out = peephole(&insns);
-        assert!(out.len() < insns.len());
-        assert_eq!(out[0].op, OP_LT_I32_IMM);
-        assert_eq!(out[0].a, 1);
-        assert_eq!(out[0].b, 0);
-        assert_eq!(out[0].c, 2);
-    }
-}
+mod tests;

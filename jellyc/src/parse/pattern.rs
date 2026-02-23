@@ -26,9 +26,7 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  */
-
 // Pattern parsing for match arms.
-
 use crate::ast::{Pattern, PatternKind, Span};
 use crate::error::{CompileError, ErrorKind};
 use crate::token::TokenKind;
@@ -39,11 +37,17 @@ pub fn parse_pattern(p: &mut P) -> Result<Pattern, CompileError> {
     let start = p.pos();
     if p.eat(TokenKind::Caret) {
         let name = p.parse_ident()?;
-        return Ok(Pattern::new(PatternKind::Pin(name), Span::new(start, p.last_span_end())));
+        return Ok(Pattern::new(
+            PatternKind::Pin(name),
+            Span::new(start, p.last_span_end()),
+        ));
     }
     if p.peek().and_then(|t| t.ident_str()) == Some("_") {
         p.bump();
-        return Ok(Pattern::new(PatternKind::Wildcard, Span::new(start, p.last_span_end())));
+        return Ok(Pattern::new(
+            PatternKind::Wildcard,
+            Span::new(start, p.last_span_end()),
+        ));
     }
     if p.peek_kind() == Some(&TokenKind::LBrace) {
         return parse_obj_pattern(p);
@@ -66,7 +70,10 @@ pub fn parse_pattern(p: &mut P) -> Result<Pattern, CompileError> {
             TokenKind::I8Lit(n) => n,
             _ => unreachable!(),
         };
-        return Ok(Pattern::new(PatternKind::I8Lit(v), Span::new(start, p.last_span_end())));
+        return Ok(Pattern::new(
+            PatternKind::I8Lit(v),
+            Span::new(start, p.last_span_end()),
+        ));
     }
     if p.peek_kind().map(|k| matches!(k, TokenKind::I16Lit(_))) == Some(true) {
         let t = p.expect(TokenKind::I16Lit(0))?;
@@ -74,16 +81,25 @@ pub fn parse_pattern(p: &mut P) -> Result<Pattern, CompileError> {
             TokenKind::I16Lit(n) => n,
             _ => unreachable!(),
         };
-        return Ok(Pattern::new(PatternKind::I16Lit(v), Span::new(start, p.last_span_end())));
+        return Ok(Pattern::new(
+            PatternKind::I16Lit(v),
+            Span::new(start, p.last_span_end()),
+        ));
     }
-    if p.peek_kind().map(|k| matches!(k, TokenKind::Minus | TokenKind::I32Lit(_))) == Some(true) {
+    if p.peek_kind()
+        .map(|k| matches!(k, TokenKind::Minus | TokenKind::I32Lit(_)))
+        == Some(true)
+    {
         if let Ok((v, span)) = p.parse_i32_lit_signed(start) {
             return Ok(Pattern::new(PatternKind::I32Lit(v), span));
         }
     }
     if p.peek_is_ident_start() {
         let name = p.parse_ident()?;
-        return Ok(Pattern::new(PatternKind::Bind(name), Span::new(start, p.last_span_end())));
+        return Ok(Pattern::new(
+            PatternKind::Bind(name),
+            Span::new(start, p.last_span_end()),
+        ));
     }
     p.err("expected match pattern")
 }
@@ -92,7 +108,10 @@ fn parse_tuple_pattern(p: &mut P) -> Result<Pattern, CompileError> {
     let start = p.pos();
     p.expect_char('(')?;
     if p.eat(TokenKind::RParen) {
-        return Ok(Pattern::new(PatternKind::TupleExact(Vec::new()), Span::new(start, p.last_span_end())));
+        return Ok(Pattern::new(
+            PatternKind::TupleExact(Vec::new()),
+            Span::new(start, p.last_span_end()),
+        ));
     }
 
     let first = parse_pattern(p)?;
@@ -112,7 +131,10 @@ fn parse_tuple_pattern(p: &mut P) -> Result<Pattern, CompileError> {
         elems.push(parse_pattern(p)?);
     }
     p.expect_char(')')?;
-    Ok(Pattern::new(PatternKind::TupleExact(elems), Span::new(start, p.last_span_end())))
+    Ok(Pattern::new(
+        PatternKind::TupleExact(elems),
+        Span::new(start, p.last_span_end()),
+    ))
 }
 
 fn parse_obj_pattern(p: &mut P) -> Result<Pattern, CompileError> {
@@ -129,14 +151,20 @@ fn parse_obj_pattern(p: &mut P) -> Result<Pattern, CompileError> {
         fields.push((key, pat));
         p.eat_char(',');
     }
-    Ok(Pattern::new(PatternKind::Obj(fields), Span::new(start, p.last_span_end())))
+    Ok(Pattern::new(
+        PatternKind::Obj(fields),
+        Span::new(start, p.last_span_end()),
+    ))
 }
 
 fn parse_array_pattern(p: &mut P) -> Result<Pattern, CompileError> {
     let start = p.pos();
     p.expect_char('[')?;
     if p.eat(TokenKind::RBracket) {
-        return Ok(Pattern::new(PatternKind::ArrayExact(Vec::new()), Span::new(start, p.last_span_end())));
+        return Ok(Pattern::new(
+            PatternKind::ArrayExact(Vec::new()),
+            Span::new(start, p.last_span_end()),
+        ));
     }
 
     let first = parse_pattern(p)?;
@@ -163,7 +191,10 @@ fn parse_array_pattern(p: &mut P) -> Result<Pattern, CompileError> {
             ));
         }
         if p.eat(TokenKind::RBracket) {
-            return Ok(Pattern::new(PatternKind::ArrayExact(prefix), Span::new(start, p.last_span_end())));
+            return Ok(Pattern::new(
+                PatternKind::ArrayExact(prefix),
+                Span::new(start, p.last_span_end()),
+            ));
         }
         p.expect_char(',')?;
         if p.eat(TokenKind::DotDotDot) {
@@ -175,7 +206,10 @@ fn parse_array_pattern(p: &mut P) -> Result<Pattern, CompileError> {
             ));
         }
         if p.eat(TokenKind::RBracket) {
-            return Ok(Pattern::new(PatternKind::ArrayExact(prefix), Span::new(start, p.last_span_end())));
+            return Ok(Pattern::new(
+                PatternKind::ArrayExact(prefix),
+                Span::new(start, p.last_span_end()),
+            ));
         }
         prefix.push(parse_pattern(p)?);
     }

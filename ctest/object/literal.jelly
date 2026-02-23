@@ -1,0 +1,3 @@
+let o : Object = {a: 1, b: "hi"};
+System.assert(o.a == 1);
+"ok"

@@ -1,0 +1,5 @@
+let a : I32 = 3;
+let b : F32 = 3.0;
+let r = if (a == b == true) { "ok" } else { "bad" };
+System.assert(r == "ok");
+r

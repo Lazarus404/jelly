@@ -1,0 +1,26 @@
+let a: I8 = 10i8;
+let b: I8 = 5i8;
+let c: I16 = 100i16;
+let d: I16 = 50i16;
+let u8: I8 = 42;
+let u16: I16 = 1000;
+let x: F16 = 1.0f16;
+let y: F16 = 0.5f16;
+let r1 = if (a + b == 15i8) { "ok" } else { "bad" };
+let folded: I8 = 5i8 + 3i8;
+let r0 = if (u8 == 42i8 && u16 == 1000i16) { "ok" } else { "bad" };
+let narrow_i8: I8 = 10 + 5;
+let narrow_i16: I16 = 100 + 200;
+let assign_i8: I8 = 1i8;
+assign_i8 = 99;
+let r2 = if (c - d == 50i16) { "ok" } else { "bad" };
+let r3 = if (x + y == 1.5f16) { "ok" } else { "bad" };
+System.assert(r0 == "ok");
+System.assert(narrow_i8 == 15i8);
+System.assert(narrow_i16 == 300i16);
+System.assert(assign_i8 == 99i8);
+System.assert(folded == 8i8);
+System.assert(r1 == "ok");
+System.assert(r2 == "ok");
+System.assert(r3 == "ok");
+"ok"

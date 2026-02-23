@@ -1,0 +1,10 @@
+// Division: / always produces float (10/20 = 0.5, 7/2 = 3.5)
+let a : I32 = 20;
+let b : I32 = 10;
+let q : F32 = b / a;
+let r = if (q > 0.49 && q < 0.51) { "ok" } else { "bad" };
+System.assert(r == "ok");
+let q2 : F32 = 7 / 2;
+let r2 = if (q2 > 3.4 && q2 < 3.6) { "ok" } else { "bad" };
+System.assert(r2 == "ok");
+"ok"

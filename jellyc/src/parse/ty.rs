@@ -26,9 +26,7 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  */
-
 // Type parsing.
-
 use crate::ast::{Span, Ty, TyKind};
 use crate::error::CompileError;
 use crate::token::TokenKind;
@@ -42,7 +40,13 @@ pub fn parse_type(p: &mut P) -> Result<Ty, CompileError> {
         if let TyKind::Generic { base, args } = left.node.clone() {
             if base == "__args__" {
                 let span = Span::new(left.span.start, right.span.end);
-                return Ok(Ty::new(TyKind::Fun { args, ret: Box::new(right) }, span));
+                return Ok(Ty::new(
+                    TyKind::Fun {
+                        args,
+                        ret: Box::new(right),
+                    },
+                    span,
+                ));
             }
             let span = Span::new(left.span.start, right.span.end);
             return Ok(Ty::new(
@@ -54,7 +58,13 @@ pub fn parse_type(p: &mut P) -> Result<Ty, CompileError> {
             ));
         }
         let span = Span::new(left.span.start, right.span.end);
-        Ok(Ty::new(TyKind::Fun { args: vec![left], ret: Box::new(right) }, span))
+        Ok(Ty::new(
+            TyKind::Fun {
+                args: vec![left],
+                ret: Box::new(right),
+            },
+            span,
+        ))
     } else {
         Ok(left)
     }
@@ -117,7 +127,10 @@ fn parse_type_atom(p: &mut P) -> Result<Ty, CompileError> {
                 Span::new(base_start, p.last_span_end()),
             ))
         } else {
-            Ok(Ty::new(TyKind::Named(base), Span::new(base_start, base_end)))
+            Ok(Ty::new(
+                TyKind::Named(base),
+                Span::new(base_start, base_end),
+            ))
         }
     }
 }

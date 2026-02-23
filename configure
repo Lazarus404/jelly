@@ -1,0 +1,42 @@
+#!/usr/bin/env sh
+# Configure the Jelly build for the current machine.
+# Run before `make` or `make dev`.
+#
+# Usage:
+#   ./configure           # Release build (default)
+#   ./configure --debug   # Debug build (for make dev)
+
+set -e
+
+BUILD_RELEASE="${BUILD_RELEASE:-build/release}"
+BUILD_DEBUG="${BUILD_DEBUG:-build/debug}"
+BUILD_TYPE="Release"
+BUILD_DIR="$BUILD_RELEASE"
+
+for arg in "$@"; do
+  case "$arg" in
+    --debug)
+      BUILD_TYPE="Debug"
+      BUILD_DIR="$BUILD_DEBUG"
+      ;;
+    --help|-h)
+      echo "Usage: ./configure [OPTIONS]"
+      echo ""
+      echo "Options:"
+      echo "  --debug    Configure for debug build (use with make dev)"
+      echo "  --help     Show this help"
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $arg" >&2
+      exit 1
+      ;;
+  esac
+done
+
+echo "Configuring Jelly build ($BUILD_TYPE) in $BUILD_DIR..."
+cmake -S . -B "$BUILD_DIR" \
+  -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
+  -DBUILD_SHARED_LIBS=OFF
+
+echo "Configuration complete. Run 'make' or 'make dev' to build."

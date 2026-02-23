@@ -1,6 +1,9 @@
 #include <jelly/internal.h>
 
 #include <stdio.h>
+
+/* Logical func index: 0..JELLY_NATIVE_BUILTIN_COUNT-1 = native, then bytecode funcs. */
+#define BC_FUNC_IDX(i) (JELLY_NATIVE_BUILTIN_COUNT + (i))
 #include <stdlib.h>
 #include <string.h>
 
@@ -1082,8 +1085,8 @@ static int run_exec_call_direct_i32(void) {
   wr_u32(buf + off, 0); off += 4;
   wr_insn(buf, &off, (uint8_t)JOP_CONST_I32, 0, 0, 0, 1);
   wr_insn(buf, &off, (uint8_t)JOP_CONST_I32, 1, 0, 0, 2);
-  // r2 = call func1 (imm=2: logical index; 0=native, 1=funcs[0], 2=funcs[1])
-  wr_insn(buf, &off, (uint8_t)JOP_CALL, 2, 0, 2, 2);
+  // r2 = call funcs[1] (logical index = NATIVE_BUILTIN_COUNT + 1)
+  wr_insn(buf, &off, (uint8_t)JOP_CALL, 2, 0, 2, BC_FUNC_IDX(1));
   wr_insn(buf, &off, (uint8_t)JOP_RET, 2, 0, 0, 0);
 
   // func1 (callee): nregs=3, ninsns=2
@@ -1140,7 +1143,7 @@ static int run_exec_call_indirect_i32(void) {
 
   wr_insn(buf, &off, (uint8_t)JOP_CONST_I32, 0, 0, 0, 1);
   wr_insn(buf, &off, (uint8_t)JOP_CONST_I32, 1, 0, 0, 2);
-  wr_insn(buf, &off, (uint8_t)JOP_CONST_FUN, 2, 0, 0, 2); // fun -> func1 (logical idx 2)
+  wr_insn(buf, &off, (uint8_t)JOP_CONST_FUN, 2, 0, 0, BC_FUNC_IDX(1)); // fun -> funcs[1]
   // r3 = callr r2, args start=r0(imm=0), nargs=2 (c=2)
   wr_insn(buf, &off, (uint8_t)JOP_CALLR, 3, 2, 2, 0);
   wr_insn(buf, &off, (uint8_t)JOP_RET, 3, 0, 0, 0);
@@ -1203,8 +1206,8 @@ static int run_exec_closure_capture_and_this(void) {
   wr_insn(buf, &off, (uint8_t)JOP_CONST_I32, 0, 0, 0, 10);
   wr_insn(buf, &off, (uint8_t)JOP_CONST_I32, 1, 0, 0, 2);
   wr_insn(buf, &off, (uint8_t)JOP_CONST_I32, 2, 0, 0, 3);
-  // r3 = closure(func1, capture r2) — logical idx 2 = funcs[1]
-  wr_insn(buf, &off, (uint8_t)JOP_CLOSURE, 3, 2, 1, 2);
+  // r3 = closure(funcs[1], capture r2)
+  wr_insn(buf, &off, (uint8_t)JOP_CLOSURE, 3, 2, 1, BC_FUNC_IDX(1));
   // r4 = bind_this(r3, r0)
   wr_insn(buf, &off, (uint8_t)JOP_BIND_THIS, 4, 3, 0, 0);
   // r5 = callr r4, args start=r1 (imm=1), nargs=1 (c=1)
@@ -1275,8 +1278,8 @@ static int run_exec_closure_capture_i64_aggressive_gc(void) {
   wr_insn(buf, &off, (uint8_t)JOP_CONST_I32, 1, 0, 0, 2);
   wr_insn(buf, &off, (uint8_t)JOP_CONST_I32, 2, 0, 0, 3);
   wr_insn(buf, &off, (uint8_t)JOP_SEXT_I64, 3, 2, 0, 0);
-  // r4 = closure(func1, capture r3 (I64)) — logical idx 2 = funcs[1]
-  wr_insn(buf, &off, (uint8_t)JOP_CLOSURE, 4, 3, 1, 2);
+  // r4 = closure(funcs[1], capture r3 (I64))
+  wr_insn(buf, &off, (uint8_t)JOP_CLOSURE, 4, 3, 1, BC_FUNC_IDX(1));
   // r5 = bind_this(r4, r0)
   wr_insn(buf, &off, (uint8_t)JOP_BIND_THIS, 5, 4, 0, 0);
   // r6 = callr r5, args start=r1 (imm=1), nargs=1 (c=1)
@@ -2745,7 +2748,7 @@ static int run_exec_f32_dyn_and_call_return(void) {
   wr_u32(buf + off, 3); off += 4;   // ninsns
   wr_u32(buf + off, 0); off += 4;   // r0 f32
   wr_u32(buf + off, 1); off += 4;   // r1 dyn
-  wr_insn(buf, &off, (uint8_t)JOP_CALL, 0, 0, 0, 2);      // r0 = call func1() (logical idx 2)
+  wr_insn(buf, &off, (uint8_t)JOP_CALL, 0, 0, 0, BC_FUNC_IDX(1));      // r0 = call funcs[1]()
   wr_insn(buf, &off, (uint8_t)JOP_TO_DYN, 1, 0, 0, 0);    // r1 = box(r0)
   wr_insn(buf, &off, (uint8_t)JOP_RET, 1, 0, 0, 0);       // ret dyn
 

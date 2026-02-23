@@ -70,6 +70,8 @@ def op_name(op: int) -> str:
         115: "LT_I64",
         116: "LT_F32",
         117: "LT_F64",
+        118: "TAILCALL",
+        119: "TAILCALLR",
     }
     return names.get(op, f"OP_{op}")
 

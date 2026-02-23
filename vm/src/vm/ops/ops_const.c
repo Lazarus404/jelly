@@ -35,12 +35,15 @@ op_result op_mov(exec_ctx* ctx, const jelly_insn* ins) {
   const jelly_bc_module* m = ctx->m;
   call_frame* fr = ctx->fr;
   const jelly_bc_function* f = ctx->f;
-  const jelly_type_entry* types = m->types;
 
   uint32_t a = ins->a, b = ins->b;
-  jelly_type_kind k = types[f->reg_types[a]].kind;
+  jelly_type_kind k = m->types[f->reg_types[a]].kind;
   size_t sz = jelly_slot_size(k);
-  memmove(vm_reg_ptr(&fr->rf, a), vm_reg_ptr(&fr->rf, b), sz);
+  uint8_t* dst = (uint8_t*)vm_reg_ptr(&fr->rf, a);
+  const uint8_t* src = (const uint8_t*)vm_reg_ptr(&fr->rf, b);
+  if(sz == 4u) *(uint32_t*)dst = *(const uint32_t*)src;
+  else if(sz == 8u) *(uint64_t*)dst = *(const uint64_t*)src;
+  else memmove(dst, src, sz);
   return OP_CONTINUE;
 }
 

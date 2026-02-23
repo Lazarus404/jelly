@@ -1,0 +1,6 @@
+// let as expression in if condition; x is in scope in then-branch
+if (let x = 42) {
+  if (x == 42) { "ok" } else { "bad" }
+} else {
+  "bad"
+}

@@ -1,0 +1,9 @@
+let t = (7, "ok");
+let ok =
+  (t.0 == 7) &&
+  (Bytes.len(t.1) == 2) &&
+  (Bytes.get_u8(t.1, 0) == 111) &&
+  (Bytes.get_u8(t.1, 1) == 107);
+let r = if (ok) { "ok" } else { "bad" };
+System.assert(r == "ok");
+r

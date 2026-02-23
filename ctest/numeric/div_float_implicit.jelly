@@ -1,0 +1,10 @@
+// Implicit float division: / with float operands produces float
+let a : F64 = 20.0;
+let b : F64 = 10.0;
+let c = b / a;
+System.assert(c == 0.5);
+let x : F64 = 7.0;
+let y : F64 = 2.0;
+let z = x / y;
+System.assert(z == 3.5);
+"ok"

@@ -1,0 +1,5 @@
+let a = false;
+let c1 = a && true;
+let r = if (c1) { "bad" } else { "ok" };
+System.assert(r == "ok");
+r

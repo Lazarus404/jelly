@@ -1,0 +1,5 @@
+let n = 3;
+while (n > 0) { n = n - 1; }
+let r = if (n == 0) { "ok" } else { "bad" };
+System.assert(r == "ok");
+r

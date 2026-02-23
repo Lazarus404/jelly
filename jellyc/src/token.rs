@@ -26,7 +26,6 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  */
-
 use crate::ast::Span;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -39,6 +38,7 @@ pub enum TokenKind {
     I32Lit(i32),
     I64Lit(i64),
     F16Lit(f32),
+    #[allow(dead_code)] // Reserved for f32 literal support
     F32Lit(f32),
     F64Lit(f64),
     Null,
@@ -46,6 +46,7 @@ pub enum TokenKind {
     // Identifiers and keywords (keywords are distinguished by kind)
     Ident(String),
     KwLet,
+    KwConst,
     KwIf,
     KwElse,
     KwWhile,
@@ -59,6 +60,7 @@ pub enum TokenKind {
     KwFn,
     KwMatch,
     KwWhen,
+    KwWith,
     KwPrototype,
     KwImport,
     KwExport,
@@ -78,29 +80,37 @@ pub enum TokenKind {
     Comma,
     Dot,
     Eq,
-    EqEq,   // ==
-    NotEq,  // !=
+    EqEq,  // ==
+    NotEq, // !=
     Lt,
-    Le,     // <=
+    LtMinus, // <-
+    Le,      // <=
     Gt,
-    Ge,     // >=
+    Ge, // >=
     Plus,
     Minus,
     Star,
     Slash,
+    Percent,
+    Shl,  // <<
+    Shr,  // >>
     Not,
     AmpAmp,
     Pipe,
     PipePipe,
     Caret,
     DotDotDot,
-    FatArrow,   // =>
-    Arrow,      // -> (for function types)
+    FatArrow, // =>
+    Arrow,    // -> (for function types)
 
-    // Backtick interpolation
+    // Backtick interpolation (reserved for future support)
+    #[allow(dead_code)]
     BacktickStart,
+    #[allow(dead_code)]
     BacktickLiteral(Vec<u8>),
+    #[allow(dead_code)]
     InterpolationStart, // ${
+    #[allow(dead_code)]
     BacktickEnd,
     /// Full backtick string with structure for parser (literal bytes + interpolation expr sources)
     BacktickString(Vec<BacktickPart>),
@@ -126,11 +136,13 @@ impl Token {
     }
 
     /// Check if the token is an identifier or keyword.
+    #[allow(dead_code)]
     pub fn is_ident_or_kw(&self) -> bool {
         matches!(
             self.kind,
             TokenKind::Ident(_)
                 | TokenKind::KwLet
+                | TokenKind::KwConst
                 | TokenKind::KwIf
                 | TokenKind::KwElse
                 | TokenKind::KwWhile
@@ -144,6 +156,7 @@ impl Token {
                 | TokenKind::KwFn
                 | TokenKind::KwMatch
                 | TokenKind::KwWhen
+                | TokenKind::KwWith
                 | TokenKind::KwPrototype
                 | TokenKind::KwImport
                 | TokenKind::KwExport
@@ -167,6 +180,7 @@ impl Token {
         match &self.kind {
             TokenKind::Ident(s) => Some(s.clone()),
             TokenKind::KwLet => Some("let".to_string()),
+            TokenKind::KwConst => Some("const".to_string()),
             TokenKind::KwIf => Some("if".to_string()),
             TokenKind::KwElse => Some("else".to_string()),
             TokenKind::KwWhile => Some("while".to_string()),
@@ -180,6 +194,7 @@ impl Token {
             TokenKind::KwFn => Some("fn".to_string()),
             TokenKind::KwMatch => Some("match".to_string()),
             TokenKind::KwWhen => Some("when".to_string()),
+            TokenKind::KwWith => Some("with".to_string()),
             TokenKind::KwPrototype => Some("prototype".to_string()),
             TokenKind::KwImport => Some("import".to_string()),
             TokenKind::KwExport => Some("export".to_string()),

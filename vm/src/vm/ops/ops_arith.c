@@ -202,6 +202,40 @@ OP_BIN_I64(op_add_i64, a + b)
 OP_BIN_I64(op_sub_i64, a - b)
 OP_BIN_I64(op_mul_i64, a * b)
 
+OP_BIN_I32_MASKED(op_mod_i32, (uint32_t)((int32_t)a % (int32_t)b))
+OP_BIN_I64(op_mod_i64, (int64_t)((int64_t)a % (int64_t)b))
+
+op_result op_shl_i32(exec_ctx* ctx, const jelly_insn* ins) {
+  call_frame* fr = ctx->fr;
+  jelly_type_kind k = vm_reg_kind(ctx->m, ctx->f, ins->a);
+  uint32_t a = vm_load_u32(&fr->rf, ins->b);
+  uint32_t b = vm_load_u32(&fr->rf, ins->c);
+  vm_store_u32_masked(&fr->rf, ins->a, (uint32_t)((int32_t)a << (int32_t)(b & 31u)), k);
+  return OP_CONTINUE;
+}
+op_result op_shl_i64(exec_ctx* ctx, const jelly_insn* ins) {
+  call_frame* fr = ctx->fr;
+  int64_t a = vm_load_i64(&fr->rf, ins->b);
+  uint64_t b = (uint64_t)vm_load_i64(&fr->rf, ins->c);
+  vm_store_i64(&fr->rf, ins->a, (int64_t)((uint64_t)a << (b & 63u)));
+  return OP_CONTINUE;
+}
+op_result op_shr_i32(exec_ctx* ctx, const jelly_insn* ins) {
+  call_frame* fr = ctx->fr;
+  jelly_type_kind k = vm_reg_kind(ctx->m, ctx->f, ins->a);
+  uint32_t a = vm_load_u32(&fr->rf, ins->b);
+  uint32_t b = vm_load_u32(&fr->rf, ins->c);
+  vm_store_u32_masked(&fr->rf, ins->a, (uint32_t)((int32_t)a >> (int32_t)(b & 31u)), k);
+  return OP_CONTINUE;
+}
+op_result op_shr_i64(exec_ctx* ctx, const jelly_insn* ins) {
+  call_frame* fr = ctx->fr;
+  int64_t a = vm_load_i64(&fr->rf, ins->b);
+  uint64_t b = (uint64_t)vm_load_i64(&fr->rf, ins->c);
+  vm_store_i64(&fr->rf, ins->a, (int64_t)a >> (int)(b & 63u));
+  return OP_CONTINUE;
+}
+
 OP_CMP_I32(op_eq_i32, a == b)
 OP_CMP_I32_IMM(op_eq_i32_imm, a == imm)
 OP_CMP_I32_IMM(op_lt_i32_imm, a < imm)

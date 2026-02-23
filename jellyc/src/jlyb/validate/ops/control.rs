@@ -1,0 +1,140 @@
+/*
+ * Copyright 2022 - Jahred Love
+ *
+ * Redistribution and use in source and binary forms, with or without modification,
+ * are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice, this
+ * list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice, this
+ * list of conditions and the following disclaimer in the documentation and/or other
+ * materials provided with the distribution.
+ *
+ * 3. Neither the name of the copyright holder nor the names of its contributors may
+ * be used to endorse or promote products derived from this software without specific
+ * prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS “AS IS” AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+ * IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+ * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+ * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ */
+
+use crate::jlyb::{Insn, Op, TypeKind};
+
+use super::super::ctx::ValidateCtx;
+
+pub(super) fn validate(ctx: &ValidateCtx<'_>, ins: &Insn) -> Result<bool, String> {
+    let op = ins.op;
+    match op {
+        x if x == Op::Nop as u8 => Ok(true),
+        x if x == Op::Ret as u8 => {
+            if (ins.a as u32) >= ctx.nregs {
+                return Err(ctx.err("ret reg out of range"));
+            }
+            Ok(true)
+        }
+        x if x == Op::Mov as u8 => {
+            if (ins.a as u32) >= ctx.nregs || (ins.b as u32) >= ctx.nregs {
+                return Err(ctx.err("mov reg out of range"));
+            }
+            // Match VM validation: allow mov between different type IDs if either:
+            // - kinds match (nominal subtypes), OR
+            // - slot sizes match (raw copy).
+            if ctx.reg_types[ins.a as usize] != ctx.reg_types[ins.b as usize] {
+                let ka = ctx.rk(ins.a)?;
+                let kb = ctx.rk(ins.b)?;
+                let sa = ctx.slot_size_bytes(ka);
+                let sb = ctx.slot_size_bytes(kb);
+                if ka == kb {
+                    // same kind, different type IDs - ok
+                } else if sa == sb && sa > 0 {
+                    // same slot size - ok
+                } else {
+                    return Err(ctx.err("mov type mismatch"));
+                }
+            }
+            Ok(true)
+        }
+        x if x == Op::Jmp as u8 => {
+            let d = ins.imm as i32;
+            let tgt = (ctx.pc as i32 + 1) + d;
+            if tgt < 0 || tgt > (ctx.m.funcs[ctx.func_i].insns.len() as i32) {
+                return Err(ctx.err("jmp target out of range"));
+            }
+            Ok(true)
+        }
+        x if x == Op::JmpIf as u8 => {
+            if (ins.a as u32) >= ctx.nregs {
+                return Err(ctx.err("jmp_if cond reg out of range"));
+            }
+            if ctx.rk(ins.a)? != TypeKind::Bool {
+                return Err(ctx.err("jmp_if cond must be bool"));
+            }
+            let d = ins.imm as i32;
+            let tgt = (ctx.pc as i32 + 1) + d;
+            if tgt < 0 || tgt > (ctx.m.funcs[ctx.func_i].insns.len() as i32) {
+                return Err(ctx.err("jmp_if target out of range"));
+            }
+            Ok(true)
+        }
+        x if x == Op::Assert as u8 => {
+            if (ins.a as u32) >= ctx.nregs {
+                return Err(ctx.err("assert cond reg out of range"));
+            }
+            if ctx.rk(ins.a)? != TypeKind::Bool {
+                return Err(ctx.err("assert cond must be bool"));
+            }
+            Ok(true)
+        }
+        x if x == Op::Try as u8 => {
+            if (ins.a as u32) >= ctx.nregs {
+                return Err(ctx.err("try reg out of range"));
+            }
+            if ctx.rk(ins.a)? != TypeKind::Dynamic {
+                return Err(ctx.err("try dst must be Dynamic"));
+            }
+            if ins.b > 1 {
+                return Err(ctx.err("try b must be 0/1 (trap_only flag)"));
+            }
+            let d = ins.imm as i32;
+            let tgt = (ctx.pc as i32 + 1) + d;
+            if tgt < 0 || tgt > (ctx.m.funcs[ctx.func_i].insns.len() as i32) {
+                return Err(ctx.err("try catch target out of range"));
+            }
+            Ok(true)
+        }
+        x if x == Op::EndTry as u8 => Ok(true),
+        x if x == Op::Throw as u8 => {
+            if (ins.a as u32) >= ctx.nregs {
+                return Err(ctx.err("throw reg out of range"));
+            }
+            if ctx.rk(ins.a)? != TypeKind::Dynamic {
+                return Err(ctx.err("throw payload must be Dynamic"));
+            }
+            Ok(true)
+        }
+        x if x == Op::SwitchKind as u8 => {
+            if (ins.a as u32) >= ctx.nregs {
+                return Err(ctx.err("switch_kind reg out of range"));
+            }
+            if ctx.rk(ins.a)? != TypeKind::I32 {
+                return Err(ctx.err("switch_kind src must be i32"));
+            }
+            let ncases = ins.b as usize;
+            if ctx.pc + 1 + ncases > ctx.m.funcs[ctx.func_i].insns.len() {
+                return Err(ctx.err("switch_kind case table out of range"));
+            }
+            Ok(true)
+        }
+        x if x == Op::CaseKind as u8 => Ok(true),
+        _ => Ok(false),
+    }
+}

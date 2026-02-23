@@ -30,6 +30,7 @@
 #include <jelly/internal.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 op_result op_closure(exec_ctx* ctx, const jelly_insn* ins) {
   jelly_vm* vm = ctx->vm;
@@ -39,13 +40,43 @@ op_result op_closure(exec_ctx* ctx, const jelly_insn* ins) {
 
   uint32_t type_id = f->reg_types[ins->a];
   uint32_t ncaps = (uint32_t)ins->c;
-  jelly_value tmp[256];
-  for(uint32_t i = 0; i < ncaps; i++) {
-    tmp[i] = vm_box_from_typed(vm, m, f, &fr->rf, (uint32_t)ins->b + i);
-    jelly_gc_push_root(vm, tmp[i]);
+
+  /* Fast path: all caps non-pointer → store raw bytes, avoid boxing/GC roots. */
+  uint8_t all_nonptr = 1;
+  uint32_t raw_cap_size = 0;
+  for(uint32_t i = 0; i < ncaps && all_nonptr; i++) {
+    uint32_t tid = f->reg_types[(uint32_t)ins->b + i];
+    jelly_type_kind k = m->types[tid].kind;
+    if(!vm_type_is_nonptr(k)) all_nonptr = 0;
+    else raw_cap_size += (uint32_t)jelly_slot_size(k);
   }
-  jelly_function* clo = jelly_closure_new(vm, type_id, ins->imm, ncaps, tmp);
-  jelly_gc_pop_roots(vm, ncaps);
+
+  jelly_function* clo;
+  if(all_nonptr && ncaps > 0) {
+    uint8_t raw_buf[256];
+    if(raw_cap_size > sizeof(raw_buf)) {
+      all_nonptr = 0; /* fall back to boxed */
+    } else {
+      uint32_t off = 0;
+      for(uint32_t i = 0; i < ncaps; i++) {
+        uint32_t r = (uint32_t)ins->b + i;
+        jelly_type_kind k = m->types[f->reg_types[r]].kind;
+        size_t sz = jelly_slot_size(k);
+        memcpy(raw_buf + off, fr->rf.mem + fr->rf.off[r], sz);
+        off += (uint32_t)sz;
+      }
+      clo = jelly_closure_new_raw(vm, type_id, ins->imm, ncaps, raw_cap_size, raw_buf);
+    }
+  }
+  if(!all_nonptr || ncaps == 0) {
+    jelly_value tmp[256];
+    for(uint32_t i = 0; i < ncaps; i++) {
+      tmp[i] = vm_box_from_typed(vm, m, f, &fr->rf, (uint32_t)ins->b + i);
+      jelly_gc_push_root(vm, tmp[i]);
+    }
+    clo = jelly_closure_new(vm, type_id, ins->imm, ncaps, tmp);
+    jelly_gc_pop_roots(vm, ncaps);
+  }
   vm_store_ptr(&fr->rf, ins->a, clo);
   if(getenv("JELLY_TRACE_CLOSURE")) {
     uint32_t func_idx = (uint32_t)(f - m->funcs);
@@ -84,7 +115,7 @@ op_result op_call(exec_ctx* ctx, const jelly_insn* ins) {
     jelly_invoke_native_builtin(ctx, ins, fi, ins->b);
     return OP_CONTINUE;
   }
-  uint32_t bytecode_idx = fi - 1u; /* 0=native, 1+=m->funcs[0+] */
+  uint32_t bytecode_idx = fi - JELLY_NATIVE_BUILTIN_COUNT;
   if(bytecode_idx >= m->nfuncs) jelly_vm_panic();
   const jelly_bc_function* cf = &m->funcs[bytecode_idx];
   uint32_t first = ins->b;
@@ -132,7 +163,7 @@ op_result op_callr(exec_ctx* ctx, const jelly_insn* ins) {
     jelly_invoke_native_builtin(ctx, ins, fi, ins->imm);
     return OP_CONTINUE;
   }
-  uint32_t bytecode_idx = fi - 1u;
+  uint32_t bytecode_idx = fi - JELLY_NATIVE_BUILTIN_COUNT;
   if(bytecode_idx >= m->nfuncs) jelly_vm_panic();
   const jelly_bc_function* cf = &m->funcs[bytecode_idx];
   uint32_t first = ins->imm;
@@ -140,5 +171,98 @@ op_result op_callr(exec_ctx* ctx, const jelly_insn* ins) {
   if(first + na > fr->rf.nregs) jelly_vm_panic();
   uint32_t caller_i = vm->call_frames_len - 1u;
   if(!vm_push_frame(vm, m, cf, f, caller_i, ins->a, first, na, fn, 1)) return OP_CONTINUE;
+  return OP_CONTINUE;
+}
+
+op_result op_tailcall(exec_ctx* ctx, const jelly_insn* ins) {
+  jelly_vm* vm = ctx->vm;
+  const jelly_bc_module* m = ctx->m;
+  const jelly_bc_function* f = ctx->f;
+  call_frame* fr = ctx->fr;
+  call_frame* frames = ctx->frames;
+
+  uint32_t fi = ins->imm;
+  if(jelly_is_native_builtin(fi)) {
+    jelly_invoke_native_builtin(ctx, ins, fi, ins->b);
+    uint32_t caller_dst = fr->caller_dst;
+    uint8_t has_caller = fr->has_caller;
+    if(fr->exc_base > vm->exc_handlers_len) jelly_vm_panic();
+    vm->exc_handlers_len = fr->exc_base;
+    if(!has_caller) {
+      jelly_value ret = vm_box_from_typed(vm, m, f, &fr->rf, ins->a);
+      vm_rf_release(vm, &fr->rf);
+      vm->call_frames_len--;
+      if(ctx->out) *ctx->out = ret;
+      return OP_RETURN;
+    }
+    if(vm->call_frames_len < 2u) jelly_vm_panic();
+    call_frame* caller = &frames[vm->call_frames_len - 2u];
+    jelly_value ret = vm_box_from_typed(vm, m, f, &fr->rf, ins->a);
+    vm_rf_release(vm, &fr->rf);
+    vm->call_frames_len--;
+    vm_store_from_boxed(m, caller->f, &caller->rf, caller_dst, ret);
+    return OP_CONTINUE;
+  }
+  uint32_t bytecode_idx = fi - JELLY_NATIVE_BUILTIN_COUNT;
+  if(bytecode_idx >= m->nfuncs) jelly_vm_panic();
+  const jelly_bc_function* cf = &m->funcs[bytecode_idx];
+  uint32_t first = ins->b;
+  uint32_t na = ins->c;
+  if(first + na > fr->rf.nregs) jelly_vm_panic();
+  if(!vm_replace_frame(vm, m, cf, f, first, na, NULL)) return OP_CONTINUE;
+  return OP_CONTINUE;
+}
+
+op_result op_tailcallr(exec_ctx* ctx, const jelly_insn* ins) {
+  jelly_vm* vm = ctx->vm;
+  const jelly_bc_module* m = ctx->m;
+  const jelly_bc_function* f = ctx->f;
+  call_frame* fr = ctx->fr;
+
+  jelly_value v = vm_load_val(&fr->rf, ins->b);
+  if(!jelly_is_ptr(v) || jelly_is_null(v)) {
+    uint32_t func_idx = (uint32_t)(f - m->funcs);
+    uint32_t pc = fr->pc > 0 ? fr->pc - 1 : 0;
+    static char buf[128];
+    (void)snprintf(buf, sizeof buf, "tailcallr callee not a function (func=%u pc=%u reg=%u)",
+                   (unsigned)func_idx, (unsigned)pc, (unsigned)ins->b);
+    (void)jelly_vm_trap(vm, JELLY_TRAP_TYPE_MISMATCH, buf);
+    return OP_CONTINUE;
+  }
+  jelly_function* fn = (jelly_function*)jelly_as_ptr(v);
+  if(fn->h.kind != (uint32_t)JELLY_OBJ_FUNCTION) {
+    (void)jelly_vm_trap(vm, JELLY_TRAP_TYPE_MISMATCH, "tailcallr callee not a function");
+    return OP_CONTINUE;
+  }
+  uint32_t fi = fn->func_index;
+  if(jelly_is_native_builtin(fi)) {
+    jelly_invoke_native_builtin(ctx, ins, fi, ins->imm);
+    uint32_t caller_dst = fr->caller_dst;
+    uint8_t has_caller = fr->has_caller;
+    if(fr->exc_base > vm->exc_handlers_len) jelly_vm_panic();
+    vm->exc_handlers_len = fr->exc_base;
+    if(!has_caller) {
+      jelly_value ret = vm_box_from_typed(vm, m, f, &fr->rf, ins->a);
+      vm_rf_release(vm, &fr->rf);
+      vm->call_frames_len--;
+      if(ctx->out) *ctx->out = ret;
+      return OP_RETURN;
+    }
+    call_frame* frames = (call_frame*)vm->call_frames;
+    if(vm->call_frames_len < 2u) jelly_vm_panic();
+    call_frame* caller = &frames[vm->call_frames_len - 2u];
+    jelly_value ret = vm_box_from_typed(vm, m, f, &fr->rf, ins->a);
+    vm_rf_release(vm, &fr->rf);
+    vm->call_frames_len--;
+    vm_store_from_boxed(m, caller->f, &caller->rf, caller_dst, ret);
+    return OP_CONTINUE;
+  }
+  uint32_t bytecode_idx = fi - JELLY_NATIVE_BUILTIN_COUNT;
+  if(bytecode_idx >= m->nfuncs) jelly_vm_panic();
+  const jelly_bc_function* cf = &m->funcs[bytecode_idx];
+  uint32_t first = ins->imm;
+  uint32_t na = ins->c;
+  if(first + na > fr->rf.nregs) jelly_vm_panic();
+  if(!vm_replace_frame(vm, m, cf, f, first, na, fn)) return OP_CONTINUE;
   return OP_CONTINUE;
 }

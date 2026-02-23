@@ -1,0 +1,7 @@
+let r = with x <- 1 {
+  x
+} else {
+  _ => 0
+};
+System.assert(r == 1);
+"ok"

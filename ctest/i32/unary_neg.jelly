@@ -1,0 +1,5 @@
+let n = 3;
+let m = -n + 4;
+let r = if (m == 1) { "ok" } else { "bad" };
+System.assert(r == "ok");
+r
