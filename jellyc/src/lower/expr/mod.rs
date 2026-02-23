@@ -730,10 +730,20 @@ pub(super) fn lower_expr_expect(
         }
         ExprKind::Index { base, index } => {
             let (vb, tb) = lower_expr(base, ctx, b)?;
-            let (vi, ti) = lower_expr(index, ctx, b)?;
-            if ti != T_I32 {
-                return Err(CompileError::new(ErrorKind::Type, index.span, "index must be i32"));
-            }
+            let (vi_raw, ti_raw) = lower_expr(index, ctx, b)?;
+            let (vi, ti) = match ti_raw {
+                T_I32 => (vi_raw, T_I32),
+                // Allow any integer index type (and Dynamic via unboxing), but the VM op expects I32.
+                T_I8 | T_I16 | T_I64 => (coerce_numeric(index.span, vi_raw, ti_raw, T_I32, b)?, T_I32),
+                T_DYNAMIC => (lower_expr_expect(index, Some(T_I32), ctx, b)?.0, T_I32),
+                _ => {
+                    return Err(CompileError::new(
+                        ErrorKind::Type,
+                        index.span,
+                        "index must be an integer",
+                    ))
+                }
+            };
             match tb {
                 T_ARRAY_I32 => {
                     let out = b.new_vreg(T_I32);
@@ -744,6 +754,11 @@ pub(super) fn lower_expr_expect(
                     let out = b.new_vreg(T_BYTES);
                     b.emit(e.span, IrOp::ArrayGet { dst: out, arr: vb, index: vi });
                     Ok((out, T_BYTES))
+                }
+                T_BYTES => {
+                    let out = b.new_vreg(T_I32);
+                    b.emit(e.span, IrOp::BytesGetU8 { dst: out, bytes: vb, index: vi });
+                    Ok((out, T_I32))
                 }
                 _ => Err(CompileError::new(ErrorKind::Type, e.span, "indexing not supported for this type yet")),
             }
