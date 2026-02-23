@@ -778,7 +778,7 @@ pub(super) fn lower_expr_expect(
         ExprKind::Index { base, index } => {
             let (vb, tb) = lower_expr(base, ctx, b)?;
             let (vi_raw, ti_raw) = lower_expr(index, ctx, b)?;
-            let (vi, ti) = match ti_raw {
+            let (vi, _ti) = match ti_raw {
                 T_I32 => (vi_raw, T_I32),
                 // Allow any integer index type (and Dynamic via unboxing), but the VM op expects I32.
                 T_I8 | T_I16 | T_I64 => (coerce_numeric(index.span, vi_raw, ti_raw, T_I32, b)?, T_I32),

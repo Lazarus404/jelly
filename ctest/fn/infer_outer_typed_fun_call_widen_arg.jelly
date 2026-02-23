@@ -1,0 +1,14 @@
+// `g` is explicitly typed, so `f` must infer its param from calling `g(y)`.
+// This also ensures the *call site* `f(41)` widens I32 -> I64 (instead of trapping in `g`).
+let g: I64 -> I64 = fn(z) {
+  return z + 1;
+};
+
+let f = fn(y) {
+  return g(y);
+};
+
+let r = f(41);
+System.assert(r == 42);
+"ok"
+

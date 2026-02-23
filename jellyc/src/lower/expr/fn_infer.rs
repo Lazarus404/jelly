@@ -252,6 +252,7 @@ struct Infer<'a> {
     param_vars: Vec<usize>,
     ret_var: usize,
     dsu: Dsu,
+    index_int_constraints: Vec<(usize, crate::ast::Span)>,
     scopes: Vec<HashMap<String, ITy>>,
 }
 
@@ -268,6 +269,7 @@ impl<'a> Infer<'a> {
             param_vars: (0..nparams).collect(),
             ret_var,
             dsu: Dsu::new(nparams + 1),
+            index_int_constraints: Vec::new(),
             scopes,
         }
     }
@@ -296,6 +298,44 @@ impl<'a> Infer<'a> {
 
     fn resolve_ty_ann(&mut self, t: &Ty) -> Result<TypeId, CompileError> {
         self.ctx.type_ctx.resolve_ty(t)
+    }
+
+    fn resolve_known_tid(&mut self, t: ITy) -> Option<TypeId> {
+        match t {
+            ITy::Known(tid) => Some(tid),
+            ITy::Var(v) => {
+                let r = self.dsu.find(v);
+                self.dsu.value[r]
+            }
+        }
+    }
+
+    fn require_int_index(&mut self, t: ITy, span: crate::ast::Span) -> Result<(), CompileError> {
+        fn ok_index_tid(tid: TypeId) -> bool {
+            matches!(tid, T_DYNAMIC | T_I8 | T_I16 | T_I32 | T_I64)
+        }
+
+        if let Some(tid) = self.resolve_known_tid(t) {
+            if !ok_index_tid(tid) {
+                return Err(CompileError::new(ErrorKind::Type, span, "index must be an integer"));
+            }
+            return Ok(());
+        }
+
+        if let ITy::Var(v) = t {
+            self.index_int_constraints.push((v, span));
+        }
+        Ok(())
+    }
+
+    fn check_int_index_constraints(&mut self) -> Result<(), CompileError> {
+        for (v, span) in std::mem::take(&mut self.index_int_constraints) {
+            let tid = self.dsu.resolve_or_default(v);
+            if !matches!(tid, T_DYNAMIC | T_I8 | T_I16 | T_I32 | T_I64) {
+                return Err(CompileError::new(ErrorKind::Type, span, "index must be an integer"));
+            }
+        }
+        Ok(())
     }
 
     fn infer_stmt(&mut self, s: &Stmt) -> Result<(), CompileError> {
@@ -350,9 +390,26 @@ impl<'a> Infer<'a> {
                 Ok(())
             }
             StmtKind::IndexAssign { base, index, expr } => {
-                let _ = self.infer_expr(base)?;
-                let _ = self.infer_expr(index)?;
-                let _ = self.infer_expr(expr)?;
+                let tb = self.infer_expr(base)?;
+                let ti = self.infer_expr(index)?;
+                self.require_int_index(ti, index.span)?;
+                let te = self.infer_expr(expr)?;
+
+                if let Some(base_tid) = self.resolve_known_tid(tb) {
+                    match base_tid {
+                        crate::typectx::T_ARRAY_I32 => {
+                            let _ = unify(&mut self.dsu, te, ITy::Known(T_I32))?;
+                        }
+                        crate::typectx::T_ARRAY_BYTES => {
+                            let _ = unify(&mut self.dsu, te, ITy::Known(T_BYTES))?;
+                        }
+                        T_BYTES => {
+                            // Bytes index assignment expects a numeric (coerced to I32 in lowering).
+                            let _ = unify(&mut self.dsu, te, ITy::Known(T_I32))?;
+                        }
+                        _ => {}
+                    }
+                }
                 Ok(())
             }
             StmtKind::ImportModule { .. }
@@ -533,13 +590,28 @@ impl<'a> Infer<'a> {
                 // Otherwise, we don't attempt to infer the signature of arbitrary callees.
                 Ok(ITy::Known(T_DYNAMIC))
             }
+            ExprKind::Index { base, index } => {
+                let tb = self.infer_expr(base)?;
+                let ti = self.infer_expr(index)?;
+                self.require_int_index(ti, index.span)?;
+
+                if let Some(base_tid) = self.resolve_known_tid(tb) {
+                    match base_tid {
+                        crate::typectx::T_ARRAY_I32 => Ok(ITy::Known(T_I32)),
+                        crate::typectx::T_ARRAY_BYTES => Ok(ITy::Known(T_BYTES)),
+                        T_BYTES => Ok(ITy::Known(T_I32)),
+                        _ => Ok(ITy::Known(T_DYNAMIC)),
+                    }
+                } else {
+                    Ok(ITy::Known(T_DYNAMIC))
+                }
+            }
             // Keep these conservative for now.
             ExprKind::Member { .. }
             | ExprKind::TypeApp { .. }
             | ExprKind::ArrayLit(_)
             | ExprKind::TupleLit(_)
             | ExprKind::ObjLit(_)
-            | ExprKind::Index { .. }
             | ExprKind::Fn { .. }
             | ExprKind::Try { .. }
             | ExprKind::Match { .. }
@@ -608,6 +680,8 @@ pub fn infer_fn_type_for_let(
         let tt = inf.infer_expr(t)?;
         let _ = unify(&mut inf.dsu, ITy::Var(inf.ret_var), tt)?;
     }
+
+    inf.check_int_index_constraints()?;
 
     let arg_tids: Vec<TypeId> = inf
         .param_vars
@@ -734,6 +808,78 @@ mod tests {
             infer_fn_type_for_let("f", &params, &body, &None, &mut ctx).unwrap();
         assert_eq!(arg_tids, vec![T_BYTES]);
         assert_eq!(ret_tid, T_I32);
+    }
+
+    #[test]
+    fn infer_fn_from_array_index_expr() {
+        let sp = Span::point(0);
+        let mut ctx = mk_ctx();
+        ctx.env_stack[0].insert(
+            "__global".to_string(),
+            Binding {
+                v: VRegId(0),
+                tid: T_OBJECT,
+            },
+        );
+        // Outer `arr: Array<I32>`.
+        ctx.env_stack[0].insert(
+            "arr".to_string(),
+            Binding {
+                v: VRegId(1),
+                tid: crate::typectx::T_ARRAY_I32,
+            },
+        );
+
+        // fn() { return arr[0]; }
+        let params = vec![];
+        let idx = Spanned::new(
+            ExprKind::Index {
+                base: Box::new(Spanned::new(ExprKind::Var("arr".to_string()), sp)),
+                index: Box::new(Spanned::new(ExprKind::I32Lit(0), sp)),
+            },
+            sp,
+        );
+        let body = vec![Spanned::new(StmtKind::Return { expr: Some(idx) }, sp)];
+
+        let (_fun_tid, arg_tids, ret_tid) =
+            infer_fn_type_for_let("f", &params, &body, &None, &mut ctx).unwrap();
+        assert!(arg_tids.is_empty());
+        assert_eq!(ret_tid, T_I32);
+    }
+
+    #[test]
+    fn infer_fn_rejects_float_index_expr() {
+        let sp = Span::point(0);
+        let mut ctx = mk_ctx();
+        ctx.env_stack[0].insert(
+            "__global".to_string(),
+            Binding {
+                v: VRegId(0),
+                tid: T_OBJECT,
+            },
+        );
+        // Outer `arr: Array<I32>`.
+        ctx.env_stack[0].insert(
+            "arr".to_string(),
+            Binding {
+                v: VRegId(1),
+                tid: crate::typectx::T_ARRAY_I32,
+            },
+        );
+
+        // fn() { return arr[1.0]; }
+        let params = vec![];
+        let idx = Spanned::new(
+            ExprKind::Index {
+                base: Box::new(Spanned::new(ExprKind::Var("arr".to_string()), sp)),
+                index: Box::new(Spanned::new(ExprKind::F64Lit(1.0), sp)),
+            },
+            sp,
+        );
+        let body = vec![Spanned::new(StmtKind::Return { expr: Some(idx) }, sp)];
+
+        let err = infer_fn_type_for_let("f", &params, &body, &None, &mut ctx).unwrap_err();
+        assert!(err.message.contains("index must be an integer"));
     }
 
     #[test]

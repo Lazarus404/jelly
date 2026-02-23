@@ -1,0 +1,11 @@
+let f = fn(x) {
+  // Requires inferring `x` as Bool; IR `&&` / `||` cannot accept Dynamic.
+  return (x && true) || false;
+};
+
+System.assert(f(true) == true);
+System.assert(f(1) == true); // all values in jelly are truthy except `null` and `false`
+System.assert(f("hi") == true);
+System.assert(f(false) == false);
+"ok"
+
