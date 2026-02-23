@@ -187,6 +187,14 @@ pub fn lower_program_to_ir(p: &Program) -> Result<IrModule, CompileError> {
         warnings: Vec::new(),
     };
 
+    // Concrete "global object" so `this` always has a tangible binding
+    // (even when compiling a standalone program rather than a module).
+    //
+    // We bind it under a reserved name so later compiler stages can reference/capture it.
+    let v_global = b.new_vreg(T_OBJECT);
+    b.emit(Span::point(0), crate::ir::IrOp::ObjNew { dst: v_global });
+    bind_local(&mut ctx, "__global", v_global, T_OBJECT);
+
     for s in &p.stmts {
         lower_stmt(s, &mut ctx, &mut b)?;
     }
@@ -320,7 +328,9 @@ pub fn lower_module_init_to_ir(
     }
     b.func.param_count = param_count as u8;
 
-    let _exports_v = b.new_vreg(T_OBJECT);
+    // Param 0: exports object (also serves as the module "global object").
+    let exports_v = b.new_vreg(T_OBJECT);
+    bind_local(&mut ctx, "__global", exports_v, T_OBJECT);
     for key in &import_keys {
         let alias = ctx.module_key_to_alias.get(key).expect("alias").clone();
         let v = b.new_vreg(T_OBJECT);

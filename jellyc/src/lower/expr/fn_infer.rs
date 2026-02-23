@@ -87,11 +87,18 @@ impl Dsu {
         self.parent[rb] = ra;
         self.numeric_hint[ra] |= self.numeric_hint[rb];
         match (self.value[ra], self.value[rb]) {
-            (Some(x), Some(y)) if x != y => Err(CompileError::new(
-                ErrorKind::Type,
-                crate::ast::Span::point(0),
-                "inferred type conflict",
-            )),
+            (Some(x), Some(y)) if x != y => {
+                if is_numeric(x) && is_numeric(y) {
+                    self.value[ra] = Some(join_numeric(x, y).expect("numeric join"));
+                    Ok(ra)
+                } else {
+                    Err(CompileError::new(
+                        ErrorKind::Type,
+                        crate::ast::Span::point(0),
+                        "inferred type conflict",
+                    ))
+                }
+            }
             (None, Some(y)) => {
                 self.value[ra] = Some(y);
                 Ok(ra)
@@ -104,6 +111,10 @@ impl Dsu {
         let r = self.find(v);
         if let Some(cur) = self.value[r] {
             if cur != tid {
+                if is_numeric(cur) && is_numeric(tid) {
+                    self.value[r] = Some(join_numeric(cur, tid).expect("numeric join"));
+                    return Ok(());
+                }
                 return Err(CompileError::new(
                     ErrorKind::Type,
                     crate::ast::Span::point(0),
@@ -138,10 +149,37 @@ fn is_numeric(t: TypeId) -> bool {
     matches!(t, T_I8 | T_I16 | T_I32 | T_I64 | T_F16 | T_F32 | T_F64)
 }
 
+fn numeric_rank(t: TypeId) -> u8 {
+    match t {
+        T_I8 => 0,
+        T_I16 => 1,
+        T_I32 => 2,
+        T_I64 => 3,
+        T_F16 => 4,
+        T_F32 => 5,
+        T_F64 => 6,
+        _ => 255,
+    }
+}
+
+fn join_numeric(a: TypeId, b: TypeId) -> Option<TypeId> {
+    if !is_numeric(a) || !is_numeric(b) {
+        return None;
+    }
+    if numeric_rank(a) >= numeric_rank(b) {
+        Some(a)
+    } else {
+        Some(b)
+    }
+}
+
 fn unify(dsu: &mut Dsu, a: ITy, b: ITy) -> Result<ITy, CompileError> {
     match (a, b) {
         (ITy::Known(x), ITy::Known(y)) => {
             if x != y {
+                if is_numeric(x) && is_numeric(y) {
+                    return Ok(ITy::Known(join_numeric(x, y).expect("numeric join")));
+                }
                 return Err(CompileError::new(
                     ErrorKind::Type,
                     crate::ast::Span::point(0),
@@ -162,7 +200,7 @@ fn unify(dsu: &mut Dsu, a: ITy, b: ITy) -> Result<ITy, CompileError> {
 }
 
 fn infer_numeric_bin(dsu: &mut Dsu, a: ITy, b: ITy) -> Result<ITy, CompileError> {
-    // Try to push a concrete numeric type across the operator.
+    // Numeric operators promote/join numeric types (widening only).
     match (a, b) {
         (ITy::Known(ta), ITy::Var(vb)) if is_numeric(ta) => {
             dsu.mark_numeric(vb);
@@ -182,14 +220,14 @@ fn infer_numeric_bin(dsu: &mut Dsu, a: ITy, b: ITy) -> Result<ITy, CompileError>
             Ok(ITy::Var(dsu.find(va)))
         }
         (ITy::Known(ta), ITy::Known(tb)) => {
-            if !is_numeric(ta) || !is_numeric(tb) || ta != tb {
+            if !is_numeric(ta) || !is_numeric(tb) {
                 return Err(CompileError::new(
                     ErrorKind::Type,
                     crate::ast::Span::point(0),
-                    "numeric operator expects same numeric types",
+                    "numeric operator expects numeric operands",
                 ));
             }
-            Ok(ITy::Known(ta))
+            Ok(ITy::Known(join_numeric(ta, tb).expect("numeric join")))
         }
         _ => Err(CompileError::new(
             ErrorKind::Type,
@@ -239,7 +277,13 @@ impl<'a> Infer<'a> {
                 return Some(*t);
             }
         }
-        None
+        // Fall back to any already-typed outer binding available during lowering.
+        self.ctx
+            .env_stack
+            .iter()
+            .rev()
+            .find_map(|m| m.get(name))
+            .map(|bd| ITy::Known(bd.tid))
     }
 
     fn resolve_ty_ann(&mut self, t: &Ty) -> Result<TypeId, CompileError> {
@@ -344,18 +388,27 @@ impl<'a> Infer<'a> {
                 infer_numeric_bin(&mut self.dsu, ta, tb)
             }
             ExprKind::Eq(a, b)
-            | ExprKind::Ne(a, b)
-            | ExprKind::Lt(a, b)
+            | ExprKind::Ne(a, b) => {
+                let ta = self.infer_expr(a)?;
+                let tb = self.infer_expr(b)?;
+                // Equality:
+                // - if both are numeric, allow mixed types (value-based) and join/promote
+                // - otherwise require/unify to the same type
+                let _ = match (ta, tb) {
+                    (ITy::Known(x), ITy::Known(y)) if is_numeric(x) && is_numeric(y) => {
+                        Ok(ITy::Known(join_numeric(x, y).expect("numeric join")))
+                    }
+                    (x, y) => unify(&mut self.dsu, x, y),
+                }?;
+                Ok(ITy::Known(T_BOOL))
+            }
+            ExprKind::Lt(a, b)
             | ExprKind::Le(a, b)
             | ExprKind::Gt(a, b)
             | ExprKind::Ge(a, b) => {
                 let ta = self.infer_expr(a)?;
                 let tb = self.infer_expr(b)?;
-                // Equality/comparison: unify operand types if possible, allow numeric bin fallback.
-                let _ = match (ta, tb) {
-                    (ITy::Known(x), ITy::Known(y)) if x == y => Ok(ITy::Known(x)),
-                    _ => infer_numeric_bin(&mut self.dsu, ta, tb),
-                }?;
+                let _ = infer_numeric_bin(&mut self.dsu, ta, tb)?;
                 Ok(ITy::Known(T_BOOL))
             }
             ExprKind::And(a, b) | ExprKind::Or(a, b) => {
@@ -399,6 +452,25 @@ impl<'a> Infer<'a> {
                         return Ok(ITy::Var(self.ret_var));
                     }
                 }
+
+                // Module export call: `Mod.f(...)` (when module interface provides a function type).
+                if let ExprKind::Member { base, name } = &callee.node {
+                    if let ExprKind::Var(alias) = &base.node {
+                        if let Some(exports) = self.ctx.module_alias_exports.get(alias) {
+                            if let Some(&fun_tid) = exports.get(name) {
+                                return self.infer_call_known_fun(fun_tid, args, e.span);
+                            }
+                        }
+                    }
+                }
+
+                // Local/global binding call: `g(...)` when `g` has a known function type.
+                if let ExprKind::Var(n) = &callee.node {
+                    if let Some(ITy::Known(fun_tid)) = self.lookup(n) {
+                        return self.infer_call_known_fun(fun_tid, args, e.span);
+                    }
+                }
+
                 // Otherwise, we don't attempt to infer the signature of arbitrary callees.
                 Ok(ITy::Known(T_DYNAMIC))
             }
@@ -414,6 +486,38 @@ impl<'a> Infer<'a> {
             | ExprKind::Match { .. }
             | ExprKind::New { .. } => Ok(ITy::Known(T_DYNAMIC)),
         }
+    }
+
+    fn infer_call_known_fun(
+        &mut self,
+        fun_tid: TypeId,
+        args: &[Expr],
+        call_span: crate::ast::Span,
+    ) -> Result<ITy, CompileError> {
+        let te = self
+            .ctx
+            .type_ctx
+            .types
+            .get(fun_tid as usize)
+            .ok_or_else(|| CompileError::new(ErrorKind::Internal, call_span, "bad function type id"))?;
+        if te.kind != crate::jlyb::TypeKind::Function {
+            return Ok(ITy::Known(T_DYNAMIC));
+        }
+        let sig = self
+            .ctx
+            .type_ctx
+            .sigs
+            .get(te.p0 as usize)
+            .ok_or_else(|| CompileError::new(ErrorKind::Internal, call_span, "bad fun sig id"))?
+            .clone();
+        if sig.args.len() != args.len() {
+            return Err(CompileError::new(ErrorKind::Type, call_span, "call arity mismatch"));
+        }
+        for (i, a) in args.iter().enumerate() {
+            let ta = self.infer_expr(a)?;
+            let _ = unify(&mut self.dsu, ta, ITy::Known(sig.args[i]))?;
+        }
+        Ok(ITy::Known(sig.ret_type))
     }
 }
 
@@ -459,3 +563,79 @@ pub fn infer_fn_type_for_let(
     Ok((fun_tid, arg_tids, ret_tid))
 }
 
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use crate::ast::{ExprKind, Span, Spanned, StmtKind};
+    use crate::ir::VRegId;
+    use crate::lower::{Binding, LowerCtx};
+    use crate::typectx::{T_I64, T_OBJECT};
+
+    use super::infer_fn_type_for_let;
+
+    fn mk_ctx() -> LowerCtx {
+        LowerCtx {
+            type_ctx: crate::typectx::TypeCtx::new_program_base(),
+            const_bytes: Vec::new(),
+            const_i64: Vec::new(),
+            const_f64: Vec::new(),
+            atoms: vec![b"__proto__".to_vec(), b"init".to_vec()],
+            atom_ids: HashMap::from([
+                ("__proto__".to_string(), crate::jlyb::ATOM___PROTO__),
+                ("init".to_string(), crate::jlyb::ATOM_INIT),
+            ]),
+            env_stack: vec![HashMap::new()],
+            loop_stack: Vec::new(),
+            fn_stack: Vec::new(),
+            nested_funcs: Vec::new(),
+            pending_fn_self: None,
+            user_top_level_fun_count: 1,
+            exports_obj: None,
+            module_alias_exports: HashMap::new(),
+            module_key_to_alias: HashMap::new(),
+            warnings: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn infer_fn_uses_outer_typed_fun_binding() {
+        let sp = Span::point(0);
+        let mut ctx = mk_ctx();
+
+        // Bind `g: (I64) -> I64` in the outer environment.
+        let g_fun = ctx.type_ctx.intern_fun_type(T_I64, &[T_I64]);
+        ctx.env_stack[0].insert(
+            "g".to_string(),
+            Binding {
+                v: VRegId(0),
+                tid: g_fun,
+            },
+        );
+        // Also ensure `__global` exists in the env (mirrors normal lowering).
+        ctx.env_stack[0].insert(
+            "__global".to_string(),
+            Binding {
+                v: VRegId(1),
+                tid: T_OBJECT,
+            },
+        );
+
+        // fn(y) { return g(y); }
+        let params = vec![("y".to_string(), None)];
+        let call_g = Spanned::new(
+            ExprKind::Call {
+                callee: Box::new(Spanned::new(ExprKind::Var("g".to_string()), sp)),
+                type_args: vec![],
+                args: vec![Spanned::new(ExprKind::Var("y".to_string()), sp)],
+            },
+            sp,
+        );
+        let body = vec![Spanned::new(StmtKind::Return { expr: Some(call_g) }, sp)];
+
+        let (_fun_tid, arg_tids, ret_tid) =
+            infer_fn_type_for_let("f", &params, &body, &None, &mut ctx).unwrap();
+        assert_eq!(arg_tids, vec![T_I64]);
+        assert_eq!(ret_tid, T_I64);
+    }
+}

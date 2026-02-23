@@ -691,6 +691,52 @@ pub(super) fn lower_expr_expect(
                 }
                 Ok((out, elem_tid))
             } else {
+                // Method extraction binding (first attempt):
+                //
+                // If the surrounding context expects a function type, interpret `obj.m` as
+                // extracting a method value *bound to* `obj` (so calling it later preserves `this`).
+                //
+                // This mirrors the call-site sugar in `lower/expr/call.rs` but applies when the
+                // member is used as a first-class value.
+                if let Some(bound_fun_tid) = expect {
+                    let te = ctx
+                        .type_ctx
+                        .types
+                        .get(bound_fun_tid as usize)
+                        .ok_or_else(|| CompileError::new(ErrorKind::Internal, e.span, "bad expected type id"))?;
+                    if te.kind == crate::jlyb::TypeKind::Function {
+                        let sig_id = te.p0;
+                        let sig = ctx
+                            .type_ctx
+                            .sigs
+                            .get(sig_id as usize)
+                            .ok_or_else(|| CompileError::new(ErrorKind::Internal, e.span, "bad fun sig id"))?
+                            .clone();
+
+                        // Unbound method signature: (Object, A...) -> R
+                        let mut unbound_args: Vec<TypeId> = Vec::with_capacity(1 + sig.args.len());
+                        unbound_args.push(T_OBJECT);
+                        unbound_args.extend(sig.args.iter().copied());
+                        let unbound_sig_id = ctx.type_ctx.intern_sig(sig.ret_type, &unbound_args);
+                        let unbound_fun_tid = ctx.type_ctx.intern_fun_type(sig.ret_type, &unbound_args);
+                        let _ = unbound_sig_id; // documented by type table; call sites will use bound signature
+
+                        let v_unbound = b.new_vreg(unbound_fun_tid);
+                        b.emit(e.span, IrOp::ObjGetAtom { dst: v_unbound, obj: v_obj, atom_id });
+
+                        let v_bound = b.new_vreg(bound_fun_tid);
+                        b.emit(
+                            e.span,
+                            IrOp::BindThis {
+                                dst: v_bound,
+                                func: v_unbound,
+                                this: v_obj,
+                            },
+                        );
+                        return Ok((v_bound, bound_fun_tid));
+                    }
+                }
+
                 // Object property access always yields Dynamic (boxed); convert if expect is typed.
                 // Emit ObjGetAtom directly to typed dst when possible to avoid tmp+FromDyn* reg-alloc
                 // issues (VM's vm_store_from_boxed unboxes based on reg_types[dst]).
