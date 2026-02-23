@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 /**
  * Copyright 2022 - Jahred Love
  *
@@ -194,6 +196,7 @@ impl TokenP {
             self.peek_kind(),
             Some(TokenKind::Ident(_))
                 | Some(TokenKind::KwLet)
+                | Some(TokenKind::KwConst)
                 | Some(TokenKind::KwIf)
                 | Some(TokenKind::KwElse)
                 | Some(TokenKind::KwWhile)
@@ -252,6 +255,7 @@ fn char_to_token_kind(c: char) -> TokenKind {
 fn kw_to_token_kind(kw: &str) -> Option<TokenKind> {
     Some(match kw {
         "let" => TokenKind::KwLet,
+        "const" => TokenKind::KwConst,
         "if" => TokenKind::KwIf,
         "else" => TokenKind::KwElse,
         "while" => TokenKind::KwWhile,

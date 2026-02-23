@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 /**
  * Copyright 2022 - Jahred Love
  *
@@ -46,6 +48,7 @@ pub enum TokenKind {
     // Identifiers and keywords (keywords are distinguished by kind)
     Ident(String),
     KwLet,
+    KwConst,
     KwIf,
     KwElse,
     KwWhile,
@@ -131,6 +134,7 @@ impl Token {
             self.kind,
             TokenKind::Ident(_)
                 | TokenKind::KwLet
+                | TokenKind::KwConst
                 | TokenKind::KwIf
                 | TokenKind::KwElse
                 | TokenKind::KwWhile
@@ -167,6 +171,7 @@ impl Token {
         match &self.kind {
             TokenKind::Ident(s) => Some(s.clone()),
             TokenKind::KwLet => Some("let".to_string()),
+            TokenKind::KwConst => Some("const".to_string()),
             TokenKind::KwIf => Some("if".to_string()),
             TokenKind::KwElse => Some("else".to_string()),
             TokenKind::KwWhile => Some("while".to_string()),

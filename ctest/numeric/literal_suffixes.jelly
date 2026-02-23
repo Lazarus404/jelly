@@ -1,0 +1,4 @@
+let x: I8 = 42i8;
+let y: I16 = 100i16;
+let z: F16 = 0.5f16;
+"ok"

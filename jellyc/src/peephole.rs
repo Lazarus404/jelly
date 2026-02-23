@@ -190,7 +190,6 @@ pub fn peephole(insns: &[Insn]) -> Vec<Insn> {
         });
     }
 
-
     // Mark dead jumps (Jmp to next instruction).
     let n = insns.len();
     for (pc, ins) in insns.iter().enumerate() {

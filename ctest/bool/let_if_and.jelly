@@ -1,0 +1,5 @@
+let a = false;
+let c1 = if (a && (Bytes.get_u8("ab", 1) == 98)) { false } else { true };
+let r = if (c1) { "ok" } else { "bad" }
+System.assert(r == "ok");
+r

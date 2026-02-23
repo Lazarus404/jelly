@@ -1,0 +1,18 @@
+hir {
+  let x: Named("I32") @0..15 : I32
+    I32Lit(1) : I32 @13..14
+  let f: Fun { args: [Spanned { node: Named("I32"), span: Span { start: 23, end: 26 } }], ret: Spanned { node: Named("I32"), span: Span { start: 30, end: 33 } } } @16..60 : (I32) -> I32
+    Fn(params=1) : (I32) -> I32 @36..59
+      captures:
+        x : I32
+      return @44..57
+        Add : I32 @51..56
+          Var(x) : I32 @51..52
+          Var(y) : I32 @55..56
+  let _ @61..74
+    Call : I32 @69..73
+      Var(f) : (I32) -> I32 @69..70
+      I32Lit(2) : I32 @71..72
+  expr:
+    BytesLit : Bytes @75..79
+}

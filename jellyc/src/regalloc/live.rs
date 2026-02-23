@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 /**
  * Copyright 2022 - Jahred Love
  *
@@ -55,11 +57,19 @@ pub fn build_intervals(
             return Err(AllocError::IntervalInternalBug);
         }
     }
+    // We use "split positions" so that within a single instruction, all uses occur before defs:
+    //
+    // - use position: 2*pc
+    // - def position: 2*pc + 1
+    //
+    // This reduces register pressure and enables copy/coalescing-like reuse when a value's
+    // last use is in the same instruction where a new value is defined.
+    //
+    // Pass 1: record first def positions and enforce multi-def rules.
     let mut def_pos: Vec<Option<u32>> = vec![None; num_vregs as usize];
     let mut end_pos: Vec<Option<u32>> = vec![None; num_vregs as usize];
-
     for (pc, ins) in instrs.iter().enumerate() {
-        let pos = pc as u32;
+        let pos = (pc as u32) * 2 + 1;
         for &d in &ins.defs {
             if d.0 >= num_vregs {
                 return Err(AllocError::VRegOutOfRange { vreg: d, vregs: num_vregs });
@@ -69,19 +79,32 @@ pub fn build_intervals(
                 if !allow {
                     return Err(AllocError::MultipleDefs { vreg: d });
                 }
-            }
-            if def_pos[d.0 as usize].is_none() {
+            } else {
                 def_pos[d.0 as usize] = Some(pos);
             }
             // A def is also a live position (even if never used).
             end_pos[d.0 as usize] = Some(end_pos[d.0 as usize].unwrap_or(pos).max(pos));
         }
+    }
+
+    // Pass 2: extend end positions for uses. This avoids false "use-before-def" in linear order
+    // due to loops/backedges, while still rejecting truly-undefined values.
+    for (pc, ins) in instrs.iter().enumerate() {
+        let pos = (pc as u32) * 2;
         for &u in &ins.uses {
             if u.0 >= num_vregs {
                 return Err(AllocError::VRegOutOfRange { vreg: u, vregs: num_vregs });
             }
-            let dpos = def_pos[u.0 as usize].ok_or(AllocError::UseBeforeDef { vreg: u })?;
-            let _ = dpos;
+            if def_pos[u.0 as usize].is_none() {
+                let allow_live_in = allow_multi_def
+                    .map(|a| a[u.0 as usize])
+                    .unwrap_or(false);
+                if allow_live_in {
+                    def_pos[u.0 as usize] = Some(0);
+                } else {
+                    return Err(AllocError::UsedButNeverDefined { vreg: u });
+                }
+            }
             let cur = end_pos[u.0 as usize].unwrap_or(pos);
             end_pos[u.0 as usize] = Some(cur.max(pos));
         }

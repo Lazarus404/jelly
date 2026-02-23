@@ -31,12 +31,12 @@
 mod integration {
     use std::collections::HashMap;
 
-    use crate::jlyb;
     use crate::link;
     use crate::lower;
     use crate::parse;
     use crate::phi;
     use crate::resolve;
+    use crate::templates;
 
     #[test]
     fn parse_error_reports_line_col_and_excerpt() {
@@ -50,16 +50,15 @@ mod integration {
 
     #[test]
     fn type_error_points_at_offending_expr() {
-        let src = "while (1) { }\n\"ok\"";
-        let prog = parse::parse_program(src).unwrap();
-        let err = match jlyb::build_program_module(&prog) {
-            Ok(_) => panic!("expected error, got Ok"),
-            Err(e) => e,
-        };
+        let src = "let x: I32 = \"ok\";\n\"ok\"";
+        let mut prog = parse::parse_program(src).unwrap();
+        templates::expand_templates(&mut prog).unwrap();
+        resolve::resolve_program(&prog).unwrap();
+        let err = crate::semantic::analyze_program(&prog).unwrap_err();
         let rendered = err.render(src, None);
         assert!(rendered.contains("type error:"), "rendered:\n{rendered}");
-        assert!(rendered.contains("while condition must be bool"), "rendered:\n{rendered}");
-        assert!(rendered.contains("while (1) { }"), "rendered:\n{rendered}");
+        assert!(rendered.contains("type mismatch (no implicit conversion)"), "rendered:\n{rendered}");
+        assert!(rendered.contains("let x: I32 = \"ok\";"), "rendered:\n{rendered}");
         assert!(rendered.lines().any(|l| l.contains('^')), "rendered:\n{rendered}");
     }
 
@@ -67,10 +66,7 @@ mod integration {
     fn name_error_points_at_unknown_var() {
         let src = "\"a\" + x";
         let prog = parse::parse_program(src).unwrap();
-        let err = match jlyb::build_program_module(&prog) {
-            Ok(_) => panic!("expected error, got Ok"),
-            Err(e) => e,
-        };
+        let err = resolve::resolve_program(&prog).unwrap_err();
         let rendered = err.render(src, None);
         assert!(rendered.contains("name error:"), "rendered:\n{rendered}");
         assert!(rendered.contains("unknown variable 'x'"), "rendered:\n{rendered}");
@@ -79,8 +75,11 @@ mod integration {
     #[test]
     fn empty_array_literal_requires_and_uses_annotation() {
         let src = "let xs: Array<I32> = [];\n\"ok\"";
-        let prog = parse::parse_program(src).unwrap();
-        assert!(jlyb::build_program_module(&prog).is_ok());
+        let mut prog = parse::parse_program(src).unwrap();
+        templates::expand_templates(&mut prog).unwrap();
+        resolve::resolve_program(&prog).unwrap();
+        let (hir, info) = crate::semantic::analyze_program(&prog).unwrap();
+        crate::lower::lower_program_to_ir(&hir.program, &info).unwrap();
     }
 
     #[test]
@@ -180,6 +179,318 @@ mod integration {
         resolve::resolve_program(&prog).unwrap();
         let (hir, info) = crate::semantic::analyze_program(&prog).unwrap();
         crate::lower::lower_program_to_ir(&hir.program, &info).unwrap();
+    }
+
+    #[test]
+    fn object_get_can_use_let_annotation_without_type_arg_in_ir_backend() {
+        // Regression: lowering used to force `Object.get` to return Dynamic unless `<T>` was provided,
+        // which made `let v: Bytes = Object.get(o, k)` fail during lowering.
+        let src = "let o = { };\nlet k = Atom.intern(\"a\");\nlet _ = Object.set(o, k, \"ok\");\nlet v: Bytes = Object.get(o, k);\nSystem.assert(Bytes.len(v) == 2);\n\"ok\"";
+        let prog = parse::parse_program(src).unwrap();
+        resolve::resolve_program(&prog).unwrap();
+        let (hir, info) = crate::semantic::analyze_program(&prog).unwrap();
+        crate::lower::lower_program_to_ir(&hir.program, &info).unwrap();
+    }
+
+    #[test]
+    fn object_get_uses_contextual_expected_type_without_type_arg() {
+        // Ensure semantic analysis pins `Object.get` return type from context so lowering can be mechanical.
+        let src = "let o = { };\nlet k = Atom.intern(\"a\");\nlet _ = Object.set(o, k, 123);\nlet v: I32 = Object.get(o, k);\nif (v == 123) { \"ok\" } else { \"bad\" }";
+        let prog = parse::parse_program(src).unwrap();
+        resolve::resolve_program(&prog).unwrap();
+        let (hir, info) = crate::semantic::analyze_program(&prog).unwrap();
+        crate::lower::lower_program_to_ir(&hir.program, &info).unwrap();
+    }
+
+    #[test]
+    fn nominal_object_types_flow_through_semantic_and_lowering() {
+        // Regression: nominal object kinds (e.g. `Foo`) should work with object literals, `new`,
+        // member access, and Object.* builtins.
+        let src = "let proto: Foo = { a: 1 };\nlet inst: Foo = new proto();\nlet k = Atom.intern(\"a\");\nlet _ = Object.set(inst, k, 123);\nlet x: I32 = inst.a;\nlet y: I32 = Object.get<I32>(inst, k);\n\"ok\"";
+        let prog = parse::parse_program(src).unwrap();
+        resolve::resolve_program(&prog).unwrap();
+        let (hir, info) = crate::semantic::analyze_program(&prog).unwrap();
+        crate::lower::lower_program_to_ir(&hir.program, &info).unwrap();
+    }
+
+    #[test]
+    fn truthiness_normalization_is_visible_in_hir_dump() {
+        let src = "let x = 1; if (x == true) { \"ok\" } else { \"bad\" }";
+        let prog = parse::parse_program(src).unwrap();
+        resolve::resolve_program(&prog).unwrap();
+        let (hir, info) = crate::semantic::analyze_program(&prog).unwrap();
+        let dumped = crate::hir::render_hir(&hir, &info);
+        assert!(dumped.contains("Truthy"), "dumped:\n{dumped}");
+        assert!(!dumped.contains("Eq :"), "dumped:\n{dumped}");
+    }
+
+    #[test]
+    fn dump_snapshots_hir_and_ir() {
+        let src = "let o = { };\nlet k = Atom.intern(\"a\");\nlet _ = Object.set(o, k, \"ok\");\nlet v: Bytes = Object.get(o, k);\nSystem.assert(Bytes.len(v) == 2);\n\"ok\"";
+        let prog = parse::parse_program(src).unwrap();
+        resolve::resolve_program(&prog).unwrap();
+        let (hir, info) = crate::semantic::analyze_program(&prog).unwrap();
+
+        let hir_dump = crate::hir::render_hir(&hir, &info);
+        let hir_expected = include_str!("../../snapshots/hir_basic.snap");
+        assert_eq!(hir_dump, hir_expected);
+
+        let ir = crate::lower::lower_program_to_ir(&hir.program, &info).unwrap();
+        let ir_dump = crate::ir::render_ir(&ir);
+        let ir_expected = include_str!("../../snapshots/ir_basic.snap");
+        assert_eq!(ir_dump, ir_expected);
+    }
+
+    #[test]
+    fn dump_snapshot_truthiness_hir() {
+        let src = "let x = 1; if (x == true) { \"ok\" } else { \"bad\" }";
+        let prog = parse::parse_program(src).unwrap();
+        resolve::resolve_program(&prog).unwrap();
+        let (hir, info) = crate::semantic::analyze_program(&prog).unwrap();
+        let hir_dump = crate::hir::render_hir(&hir, &info);
+        let expected = include_str!("../../snapshots/hir_truthiness.snap");
+        assert!(hir_dump == expected, "HIR dump:\n{hir_dump}");
+    }
+
+    #[test]
+    fn dump_snapshots_new_nominal_object_hir_and_ir() {
+        let src = "let proto: Foo = { a: 1 };\nlet inst: Foo = new proto(2, \"hi\");\nlet _ = inst.a;\n\"ok\"";
+        let prog = parse::parse_program(src).unwrap();
+        resolve::resolve_program(&prog).unwrap();
+        let (hir, info) = crate::semantic::analyze_program(&prog).unwrap();
+
+        let hir_dump = crate::hir::render_hir(&hir, &info);
+        let hir_expected = include_str!("../../snapshots/hir_new_nominal.snap");
+        assert!(hir_dump == hir_expected, "HIR dump:\n{hir_dump}");
+
+        let ir = crate::lower::lower_program_to_ir(&hir.program, &info).unwrap();
+        let ir_dump = crate::ir::render_ir(&ir);
+        let ir_expected = include_str!("../../snapshots/ir_new_nominal.snap");
+        assert!(ir_dump == ir_expected, "IR dump:\n{ir_dump}");
+    }
+
+    #[test]
+    fn dump_snapshots_try_hir_and_ir() {
+        let src = "try { throw \"boom\"; \"no\" } catch(e) { e; \"ok\" }";
+        let prog = parse::parse_program(src).unwrap();
+        resolve::resolve_program(&prog).unwrap();
+        let (hir, info) = crate::semantic::analyze_program(&prog).unwrap();
+
+        let hir_dump = crate::hir::render_hir(&hir, &info);
+        let hir_expected = include_str!("../../snapshots/hir_try.snap");
+        assert!(hir_dump == hir_expected, "HIR dump:\n{hir_dump}");
+
+        let ir = crate::lower::lower_program_to_ir(&hir.program, &info).unwrap();
+        let ir_dump = crate::ir::render_ir(&ir);
+        let ir_expected = include_str!("../../snapshots/ir_try.snap");
+        assert!(ir_dump == ir_expected, "IR dump:\n{ir_dump}");
+    }
+
+    #[test]
+    fn dump_snapshots_match_hir_and_ir() {
+        let src = "let x: I32 = 1; match(x) { 0 => \"zero\", 1 => \"one\", _ => \"other\" }";
+        let prog = parse::parse_program(src).unwrap();
+        resolve::resolve_program(&prog).unwrap();
+        let (hir, info) = crate::semantic::analyze_program(&prog).unwrap();
+
+        let hir_dump = crate::hir::render_hir(&hir, &info);
+        let hir_expected = include_str!("../../snapshots/hir_match.snap");
+        assert!(hir_dump == hir_expected, "HIR dump:\n{hir_dump}");
+
+        let ir = crate::lower::lower_program_to_ir(&hir.program, &info).unwrap();
+        let ir_dump = crate::ir::render_ir(&ir);
+        let ir_expected = include_str!("../../snapshots/ir_match.snap");
+        assert!(ir_dump == ir_expected, "IR dump:\n{ir_dump}");
+    }
+
+    #[test]
+    fn dump_snapshots_match_dynamic_scalar_fastpath_hir_and_ir() {
+        // This should trigger the `Dynamic` scalar-pattern fast-path in lowering:
+        // it uses `Kindof` + `SwitchKind` instead of an if-chain.
+        let src = "let o = { x: 1 };\nlet d = o.x;\nmatch(d) { 0 => \"zero\", 1 => \"one\", _ => \"other\" }";
+        let prog = parse::parse_program(src).unwrap();
+        resolve::resolve_program(&prog).unwrap();
+        let (hir, info) = crate::semantic::analyze_program(&prog).unwrap();
+
+        let hir_dump = crate::hir::render_hir(&hir, &info);
+        let hir_expected = include_str!("../../snapshots/hir_match_dynamic_scalar.snap");
+        assert!(hir_dump == hir_expected, "HIR dump:\n{hir_dump}");
+
+        let ir = crate::lower::lower_program_to_ir(&hir.program, &info).unwrap();
+        let ir_dump = crate::ir::render_ir(&ir);
+        let ir_expected = include_str!("../../snapshots/ir_match_dynamic_scalar.snap");
+        assert!(ir_dump == ir_expected, "IR dump:\n{ir_dump}");
+    }
+
+    #[test]
+    fn dump_snapshots_object_get_context_vs_type_arg_hir_and_ir() {
+        // Lock in the contract that `Object.get` return type is decided by semantic analysis,
+        // either from contextual expected type or explicit `<T>` type-arg.
+        let src = "let o = { };\nlet k = Atom.intern(\"a\");\nlet _ = Object.set(o, k, 123);\nlet a: I32 = Object.get(o, k);\nlet b = Object.get<I32>(o, k);\nSystem.assert(a == b);\n\"ok\"";
+        let prog = parse::parse_program(src).unwrap();
+        resolve::resolve_program(&prog).unwrap();
+        let (hir, info) = crate::semantic::analyze_program(&prog).unwrap();
+
+        let hir_dump = crate::hir::render_hir(&hir, &info);
+        let hir_expected = include_str!("../../snapshots/hir_object_get_context_vs_type_arg.snap");
+        assert!(hir_dump == hir_expected, "HIR dump:\n{hir_dump}");
+
+        let ir = crate::lower::lower_program_to_ir(&hir.program, &info).unwrap();
+        let ir_dump = crate::ir::render_ir(&ir);
+        let ir_expected = include_str!("../../snapshots/ir_object_get_context_vs_type_arg.snap");
+        assert!(ir_dump == ir_expected, "IR dump:\n{ir_dump}");
+    }
+
+    #[test]
+    fn dump_snapshot_closure_capture_hir() {
+        let src = "let x: I32 = 1;\nlet f: I32 -> I32 = fn(y) { return x + y; };\nlet _ = f(2);\n\"ok\"";
+        let prog = parse::parse_program(src).unwrap();
+        resolve::resolve_program(&prog).unwrap();
+        let (hir, info) = crate::semantic::analyze_program(&prog).unwrap();
+        let hir_dump = crate::hir::render_hir(&hir, &info);
+        let expected = include_str!("../../snapshots/hir_closure_capture.snap");
+        assert!(hir_dump == expected, "HIR dump:\n{hir_dump}");
+    }
+
+    #[test]
+    fn dump_snapshots_method_bind_this_hir_and_ir() {
+        let src = "let inc: (Object, I32) -> I32 = fn(self, x) { return x + 1; };\nlet o = { inc: inc };\nlet m: I32 -> I32 = o.inc;\nlet r: I32 = m(41);\n\"ok\"";
+        let prog = parse::parse_program(src).unwrap();
+        resolve::resolve_program(&prog).unwrap();
+        let (hir, info) = crate::semantic::analyze_program(&prog).unwrap();
+
+        let hir_dump = crate::hir::render_hir(&hir, &info);
+        let hir_expected = include_str!("../../snapshots/hir_method_bind_this.snap");
+        assert!(hir_dump == hir_expected, "HIR dump:\n{hir_dump}");
+
+        let ir = crate::lower::lower_program_to_ir(&hir.program, &info).unwrap();
+        let ir_dump = crate::ir::render_ir(&ir);
+        let ir_expected = include_str!("../../snapshots/ir_method_bind_this.snap");
+        assert!(ir_dump == ir_expected, "IR dump:\n{ir_dump}");
+    }
+
+    #[test]
+    fn dump_snapshot_dynamic_numeric_coercion_hir() {
+        let src = "let o = { x: 1 };\nif (o.x < 2) { \"ok\" } else { \"bad\" }";
+        let prog = parse::parse_program(src).unwrap();
+        resolve::resolve_program(&prog).unwrap();
+        let (hir, info) = crate::semantic::analyze_program(&prog).unwrap();
+        let hir_dump = crate::hir::render_hir(&hir, &info);
+        let expected = include_str!("../../snapshots/hir_dynamic_numeric.snap");
+        assert!(hir_dump == expected, "HIR dump:\n{hir_dump}");
+    }
+
+    #[test]
+    fn dump_snapshots_module_namespace_call_hir_and_ir() {
+        let math_src = "export let add: (I32, I32) -> I32 = fn(a, b) { return a + b; }; \"math\"";
+        let entry_src = "import math as Math;\nlet r: I32 = Math.add(1, 2);\nif (r == 3) { \"ok\" } else { \"bad\" }";
+
+        let math_prog = parse::parse_program(math_src).unwrap();
+        resolve::resolve_program(&math_prog).unwrap();
+        let math_exports = link::collect_exports_from_program(&math_prog).unwrap();
+
+        let entry_prog = parse::parse_program(entry_src).unwrap();
+        resolve::resolve_program(&entry_prog).unwrap();
+
+        let import_exports: HashMap<String, HashMap<String, crate::typectx::TypeRepr>> =
+            HashMap::from([("math".to_string(), math_exports)]);
+
+        let (hir, info) =
+            crate::semantic::analyze_module_init("__entry__", &entry_prog, true, &import_exports).unwrap();
+
+        let hir_dump = crate::hir::render_hir(&hir, &info);
+        let hir_expected = include_str!("../../snapshots/hir_module_namespace_call.snap");
+        assert!(hir_dump == hir_expected, "HIR dump:\n{hir_dump}");
+
+        let lowered =
+            lower::lower_module_init_to_ir("__entry__", &hir.program, &info, true, &import_exports).unwrap();
+        let ir_dump = crate::ir::render_ir(&lowered.ir);
+        let ir_expected = include_str!("../../snapshots/ir_module_namespace_call.snap");
+        assert!(ir_dump == ir_expected, "IR dump:\n{ir_dump}");
+    }
+
+    #[test]
+    fn dump_snapshots_tuple_access_hir_and_ir() {
+        let src = "let t = (1, \"hi\");\nlet a: I32 = t.0;\nlet b: Bytes = t.1;\nSystem.assert(a == 1);\nSystem.assert(Bytes.len(b) == 2);\n\"ok\"";
+        let prog = parse::parse_program(src).unwrap();
+        resolve::resolve_program(&prog).unwrap();
+        let (hir, info) = crate::semantic::analyze_program(&prog).unwrap();
+
+        let hir_dump = crate::hir::render_hir(&hir, &info);
+        let hir_expected = include_str!("../../snapshots/hir_tuple_access.snap");
+        assert!(hir_dump == hir_expected, "HIR dump:\n{hir_dump}");
+
+        let ir = crate::lower::lower_program_to_ir(&hir.program, &info).unwrap();
+        let ir_dump = crate::ir::render_ir(&ir);
+        let ir_expected = include_str!("../../snapshots/ir_tuple_access.snap");
+        assert!(ir_dump == ir_expected, "IR dump:\n{ir_dump}");
+    }
+
+    #[test]
+    fn dump_snapshots_new_with_init_hir_and_ir() {
+        let src = "let init: (Object, I32) -> Object = fn(self, x) { let k = Atom.intern(\"a\"); let _ = Object.set(self, k, x); return self; };\nlet proto = { init: init };\nlet inst = new proto(7);\nlet k = Atom.intern(\"a\");\nlet v: I32 = Object.get<I32>(inst, k);\nSystem.assert(v == 7);\n\"ok\"";
+        let prog = parse::parse_program(src).unwrap();
+        resolve::resolve_program(&prog).unwrap();
+        let (hir, info) = crate::semantic::analyze_program(&prog).unwrap();
+
+        let hir_dump = crate::hir::render_hir(&hir, &info);
+        let hir_expected = include_str!("../../snapshots/hir_new_init.snap");
+        assert!(hir_dump == hir_expected, "HIR dump:\n{hir_dump}");
+
+        let ir = crate::lower::lower_program_to_ir(&hir.program, &info).unwrap();
+        let ir_dump = crate::ir::render_ir(&ir);
+        let ir_expected = include_str!("../../snapshots/ir_new_init.snap");
+        assert!(ir_dump == ir_expected, "IR dump:\n{ir_dump}");
+    }
+
+    #[test]
+    fn module_alias_can_shadow_builtin_namespace_in_lowering() {
+        // Regression: `import foo as Bytes` must shadow the builtin `Bytes.*` namespace in lowering.
+        // In particular, `Bytes.len(...)` must compile as a module export call (ObjGetAtom+Call),
+        // not as the builtin BytesLen op.
+        let mod_src = "export let len: (Bytes) -> I32 = fn(x) { return 0; }; \"m\"";
+        let entry_src = "import m as Bytes;\nlet r: I32 = Bytes.len(\"hi\");\nif (r == 0) { \"ok\" } else { \"bad\" }";
+
+        let mod_prog = parse::parse_program(mod_src).unwrap();
+        resolve::resolve_program(&mod_prog).unwrap();
+        let mod_exports = link::collect_exports_from_program(&mod_prog).unwrap();
+
+        let entry_prog = parse::parse_program(entry_src).unwrap();
+        resolve::resolve_program(&entry_prog).unwrap();
+
+        let import_exports: HashMap<String, HashMap<String, crate::typectx::TypeRepr>> =
+            HashMap::from([("m".to_string(), mod_exports)]);
+
+        let (hir, info) =
+            crate::semantic::analyze_module_init("__entry__", &entry_prog, true, &import_exports).unwrap();
+        let lowered =
+            lower::lower_module_init_to_ir("__entry__", &hir.program, &info, true, &import_exports).unwrap();
+        let ir_dump = crate::ir::render_ir(&lowered.ir);
+
+        assert!(
+            !ir_dump.contains("BytesLen"),
+            "expected module call, got builtin BytesLen:\n{ir_dump}"
+        );
+        assert!(
+            ir_dump.contains("ObjGetAtom") && ir_dump.contains("Call {"),
+            "expected module call sequence:\n{ir_dump}"
+        );
+    }
+
+    #[test]
+    fn bench_programs_compile_through_semantic_and_ir_lowering() {
+        // Regression coverage: these programs previously failed after tightening "no-guess" lowering.
+        // Keep this list small and focused; `bench/bench.py` is the fuller integration run.
+        for src in [
+            include_str!("../../bench/fannkuch.jelly"),
+            include_str!("../../bench/fp.jelly"),
+            include_str!("../../bench/nbodies.jelly"),
+        ] {
+            let prog = parse::parse_program(src).unwrap();
+            resolve::resolve_program(&prog).unwrap();
+            let (hir, info) = crate::semantic::analyze_program(&prog).unwrap();
+            crate::lower::lower_program_to_ir(&hir.program, &info).unwrap();
+        }
     }
 
     #[test]

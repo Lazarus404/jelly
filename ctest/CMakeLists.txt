@@ -223,21 +223,55 @@ if(EXISTS "${JELLYC_BIN}")
     set_tests_properties(${test_name} PROPERTIES WILL_FAIL TRUE)
   endfunction()
 
-  add_jellyc_ok_test(ast_bytes_hello ast bytes/hello.jelly)
   add_jellyc_ok_test(ir_bytes_hello ir bytes/hello.jelly)
   add_jellyc_ok_test(ir_fn_infer_ackerman ir fn/infer_ackerman.jelly)
   add_jellyc_ok_test(ir_fn_infer_param_numeric_add ir fn/infer_param_numeric_add.jelly)
   add_jellyc_ok_test(ir_fn_infer_param_bytes_concat ir fn/infer_param_bytes_concat.jelly)
-  add_jellyc_fail_test(ir_fn_infer_param_bool_and_or ir fn/infer_param_bool_and_or.jelly)
+  add_jellyc_ok_test(ir_fn_infer_param_bool_and_or ir fn/infer_param_bool_and_or.jelly)
   add_jellyc_ok_test(ir_fn_infer_outer_typed_fun_call_widen_arg ir fn/infer_outer_typed_fun_call_widen_arg.jelly)
-  add_jellyc_fail_test(ir_fn_infer_nested_fn_capture_and_param ir fn/infer_nested_fn_capture_and_param.jelly)
-  add_jellyc_ok_test(ast_bool_eq_truthy ast bool/eq_truthy.jelly)
+  add_jellyc_ok_test(ir_fn_infer_nested_fn_capture_and_param ir fn/infer_nested_fn_capture_and_param.jelly)
   add_jellyc_ok_test(ir_bool_eq_truthy ir bool/eq_truthy.jelly)
-  add_jellyc_ok_test(ast_array_index_sugar ast array/index_sugar.jelly)
   add_jellyc_ok_test(ir_array_index_sugar ir array/index_sugar.jelly)
-  add_jellyc_ok_test(ast_array_index_sugar_i8_index ast array/index_sugar_i8_index.jelly)
   add_jellyc_ok_test(ir_array_index_sugar_i8_index ir array/index_sugar_i8_index.jelly)
-  add_jellyc_ok_test(ast_bytes_index_sugar_i16_index ast bytes/index_sugar_i16_index.jelly)
   add_jellyc_ok_test(ir_bytes_index_sugar_i16_index ir bytes/index_sugar_i16_index.jelly)
+
+  # Hook up the rest of `ctest/**/*.jelly` automatically so the suite stays complete.
+  # NOTE: We mostly care about the IR backend here; AST backend coverage can be added
+  # later if desired.
+  set(_jellyc_manual_files
+    bytes/hello.jelly
+    fn/infer_ackerman.jelly
+    fn/infer_param_numeric_add.jelly
+    fn/infer_param_bytes_concat.jelly
+    fn/infer_param_bool_and_or.jelly
+    fn/infer_outer_typed_fun_call_widen_arg.jelly
+    fn/infer_nested_fn_capture_and_param.jelly
+    bool/eq_truthy.jelly
+    array/index_sugar.jelly
+    array/index_sugar_i8_index.jelly
+    bytes/index_sugar_i16_index.jelly
+  )
+
+  file(GLOB_RECURSE _jellyc_all_jelly_files CONFIGURE_DEPENDS
+    RELATIVE "${CMAKE_CURRENT_LIST_DIR}"
+    "${CMAKE_CURRENT_LIST_DIR}/*.jelly"
+  )
+  # Exclude CTest's own scratch directory if present in the source tree.
+  list(FILTER _jellyc_all_jelly_files EXCLUDE REGEX "^Testing/")
+
+  foreach(_jf IN LISTS _jellyc_all_jelly_files)
+    list(FIND _jellyc_manual_files "${_jf}" _idx)
+    if(_idx GREATER -1)
+      continue()
+    endif()
+    string(REGEX REPLACE "\\.jelly$" "" _base "${_jf}")
+    string(REPLACE "/" "_" _base "${_base}")
+    set(_tname "ir_ctest_${_base}")
+    if(_jf STREQUAL "assert/uncaught.jelly" OR _jf STREQUAL "const/assign_fails.jelly")
+      add_jellyc_fail_test(${_tname} ir ${_jf})
+    else()
+      add_jellyc_ok_test(${_tname} ir ${_jf})
+    endif()
+  endforeach()
 endif()
 

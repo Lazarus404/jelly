@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 /**
  * Copyright 2022 - Jahred Love
  *
@@ -26,6 +28,12 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  */
+
+// Templates are a compile-time feature that allows you to define a template for a type
+// and then instantiate it with different type arguments. This is used to define generic
+// types and functions. This is a compile-time feature that allows you to define a 
+// template for a type and then instantiate it with different type arguments.
+// This is used to define generic types and functions.
 
 use std::collections::{HashMap, HashSet};
 
@@ -230,12 +238,14 @@ fn subst_arm(a: &MatchArm, subst: &HashMap<String, Ty>) -> MatchArm {
 fn subst_stmt(s: &Stmt, subst: &HashMap<String, Ty>) -> Stmt {
     let node = match &s.node {
         StmtKind::Let {
+            is_const,
             exported,
             name,
             type_params,
             ty,
             expr,
         } => StmtKind::Let {
+            is_const: *is_const,
             exported: *exported,
             name: name.clone(),
             type_params: type_params.clone(),
@@ -310,6 +320,181 @@ struct Expander {
 }
 
 impl Expander {
+    fn shift_span(sp: Span, delta: i64) -> Span {
+        if delta == 0 {
+            return sp;
+        }
+        if delta > 0 {
+            let d = delta as usize;
+            Span {
+                start: sp.start.saturating_add(d),
+                end: sp.end.saturating_add(d),
+            }
+        } else {
+            let d = (-delta) as usize;
+            Span {
+                start: sp.start.saturating_sub(d),
+                end: sp.end.saturating_sub(d),
+            }
+        }
+    }
+
+    fn shift_stmt_spans(&mut self, s: &mut Stmt, delta: i64) {
+        s.span = Self::shift_span(s.span, delta);
+        match &mut s.node {
+            StmtKind::Let { ty, expr, .. } => {
+                if let Some(t) = ty {
+                    t.span = Self::shift_span(t.span, delta);
+                }
+                self.shift_expr_spans(expr, delta);
+            }
+            StmtKind::Assign { expr, .. } => self.shift_expr_spans(expr, delta),
+            StmtKind::Expr { expr } => self.shift_expr_spans(expr, delta),
+            StmtKind::While { cond, body } => {
+                self.shift_expr_spans(cond, delta);
+                for st in body {
+                    self.shift_stmt_spans(st, delta);
+                }
+            }
+            StmtKind::Return { expr } => {
+                if let Some(e) = expr {
+                    self.shift_expr_spans(e, delta);
+                }
+            }
+            StmtKind::Throw { expr } => self.shift_expr_spans(expr, delta),
+            StmtKind::MemberAssign { base, expr, .. } => {
+                self.shift_expr_spans(base, delta);
+                self.shift_expr_spans(expr, delta);
+            }
+            StmtKind::IndexAssign { base, index, expr } => {
+                self.shift_expr_spans(base, delta);
+                self.shift_expr_spans(index, delta);
+                self.shift_expr_spans(expr, delta);
+            }
+            StmtKind::ImportModule { .. }
+            | StmtKind::ImportFrom { .. }
+            | StmtKind::Prototype { .. }
+            | StmtKind::Break
+            | StmtKind::Continue => {}
+        }
+    }
+
+    fn shift_expr_spans(&mut self, e: &mut Expr, delta: i64) {
+        e.span = Self::shift_span(e.span, delta);
+        match &mut e.node {
+            ExprKind::Member { base, .. } => self.shift_expr_spans(base, delta),
+            ExprKind::Call { callee, args, type_args, .. } => {
+                self.shift_expr_spans(callee, delta);
+                for a in args {
+                    self.shift_expr_spans(a, delta);
+                }
+                for ta in type_args {
+                    ta.span = Self::shift_span(ta.span, delta);
+                }
+            }
+            ExprKind::TypeApp { base, type_args } => {
+                self.shift_expr_spans(base, delta);
+                for ta in type_args {
+                    ta.span = Self::shift_span(ta.span, delta);
+                }
+            }
+            ExprKind::Index { base, index } => {
+                self.shift_expr_spans(base, delta);
+                self.shift_expr_spans(index, delta);
+            }
+            ExprKind::ArrayLit(elems) | ExprKind::TupleLit(elems) => {
+                for el in elems {
+                    self.shift_expr_spans(el, delta);
+                }
+            }
+            ExprKind::ObjLit(fields) => {
+                for (_k, v) in fields {
+                    self.shift_expr_spans(v, delta);
+                }
+            }
+            ExprKind::Fn { params, body, tail } => {
+                for (_pn, ann) in params {
+                    if let Some(t) = ann {
+                        t.span = Self::shift_span(t.span, delta);
+                    }
+                }
+                for st in body {
+                    self.shift_stmt_spans(st, delta);
+                }
+                if let Some(t) = tail.as_deref_mut() {
+                    self.shift_expr_spans(t, delta);
+                }
+            }
+            ExprKind::If { cond, then_br, else_br } => {
+                self.shift_expr_spans(cond, delta);
+                self.shift_expr_spans(then_br, delta);
+                self.shift_expr_spans(else_br, delta);
+            }
+            ExprKind::Block { stmts, expr } => {
+                for st in stmts {
+                    self.shift_stmt_spans(st, delta);
+                }
+                self.shift_expr_spans(expr, delta);
+            }
+            ExprKind::Try { body, catch_body, .. } => {
+                self.shift_expr_spans(body, delta);
+                self.shift_expr_spans(catch_body, delta);
+            }
+            ExprKind::Match { subject, arms } => {
+                self.shift_expr_spans(subject, delta);
+                for a in arms {
+                    a.pat.span = Self::shift_span(a.pat.span, delta);
+                    // Patterns are nested; for now we only shift the top pattern span,
+                    // which is sufficient to avoid cross-specialization collisions.
+                    if let Some(w) = &mut a.when {
+                        self.shift_expr_spans(w, delta);
+                    }
+                    for st in &mut a.body {
+                        self.shift_stmt_spans(st, delta);
+                    }
+                    if let Some(t) = &mut a.tail {
+                        self.shift_expr_spans(t, delta);
+                    }
+                }
+            }
+            ExprKind::New { proto, args } => {
+                self.shift_expr_spans(proto, delta);
+                for a in args {
+                    self.shift_expr_spans(a, delta);
+                }
+            }
+            ExprKind::Truthy(x)
+            | ExprKind::Not(x)
+            | ExprKind::Neg(x) => self.shift_expr_spans(x, delta),
+            ExprKind::Add(a, b)
+            | ExprKind::Sub(a, b)
+            | ExprKind::Mul(a, b)
+            | ExprKind::Div(a, b)
+            | ExprKind::Eq(a, b)
+            | ExprKind::Ne(a, b)
+            | ExprKind::Lt(a, b)
+            | ExprKind::Le(a, b)
+            | ExprKind::Gt(a, b)
+            | ExprKind::Ge(a, b)
+            | ExprKind::And(a, b)
+            | ExprKind::Or(a, b) => {
+                self.shift_expr_spans(a, delta);
+                self.shift_expr_spans(b, delta);
+            }
+            ExprKind::BytesLit(_)
+            | ExprKind::BoolLit(_)
+            | ExprKind::I32Lit(_)
+            | ExprKind::I8Lit(_)
+            | ExprKind::I16Lit(_)
+            | ExprKind::I64Lit(_)
+            | ExprKind::F16Lit(_)
+            | ExprKind::F64Lit(_)
+            | ExprKind::AtomLit(_)
+            | ExprKind::Null
+            | ExprKind::Var(_) => {}
+        }
+    }
+
     fn wrap_obj_with_template_meta(
         &mut self,
         obj_expr: Expr, // Expression for the object literal
@@ -318,6 +503,10 @@ impl Expander {
         self_ty: &Ty, // Self type
         span: Span, // Span for the statement
     ) -> Result<Expr, CompileError> {
+        // Template expansion introduces synthetic AST nodes. Our semantic tables are keyed by `Span`,
+        // so we must avoid re-using the same span for multiple different nodes.
+        let sp = |off: usize| Span::point(span.start.saturating_add(off));
+
         let tmp = format!("__tmpl{}", self.tmp_counter);
         self.tmp_counter += 1;
 
@@ -331,34 +520,35 @@ impl Expander {
 
         let s_tmp = Stmt::new(
             StmtKind::Let {
+                is_const: false,
                 exported: false,
                 name: tmp.clone(),
                 type_params: Vec::new(),
                 ty: Some(self_ty.clone()),
                 expr: obj_expr,
             },
-            span,
+            sp(0),
         );
         let set_name = Stmt::new(
             StmtKind::MemberAssign {
-                base: Expr::new(ExprKind::Var(tmp.clone()), span),
+                base: Expr::new(ExprKind::Var(tmp.clone()), sp(1)),
                 name: "__template__".to_string(),
-                expr: Expr::new(ExprKind::BytesLit(tmpl_name.as_bytes().to_vec()), span),
+                expr: Expr::new(ExprKind::BytesLit(tmpl_name.as_bytes().to_vec()), sp(4)),
             },
-            span,
+            sp(1),
         );
         let set_args = Stmt::new(
             StmtKind::MemberAssign {
-                base: Expr::new(ExprKind::Var(tmp.clone()), span),
+                base: Expr::new(ExprKind::Var(tmp.clone()), sp(2)),
                 name: "__type_args__".to_string(),
-                expr: Expr::new(ExprKind::BytesLit(arg_s.into_bytes()), span),
+                expr: Expr::new(ExprKind::BytesLit(arg_s.into_bytes()), sp(5)),
             },
-            span,
+            sp(2),
         );
         Ok(Expr::new(
             ExprKind::Block {
                 stmts: vec![s_tmp, set_name, set_args],
-                expr: Box::new(Expr::new(ExprKind::Var(tmp), span)),
+                expr: Box::new(Expr::new(ExprKind::Var(tmp), sp(3))),
             },
             span,
         ))
@@ -424,22 +614,34 @@ impl Expander {
         let spec_expr_raw = subst_expr(&def.expr, &subst);
         let mut spec_expr = self.rewrite_expr(&spec_expr_raw)?;
 
+        // Specializations clone AST nodes from the template definition; ensure spans are
+        // distinct across different specializations so semantic side tables (keyed by span)
+        // don't collide.
+        let spec_idx = self.emitted.len() as i64;
+        self.shift_expr_spans(&mut spec_expr, -spec_idx);
+
         // Runtime template metadata (MVP):
         // If the specialization produces an object literal (commonly prototypes), attach
         // `.__template__` and `.__type_args__` fields on the object.
         if matches!(spec_expr.node, ExprKind::ObjLit(_)) {
-            spec_expr = self.wrap_obj_with_template_meta(spec_expr, base, type_args, &spec_ty, use_span)?;
+            // Use the specialization expression span (not the instantiation site span) to avoid
+            // span collisions with unrelated expressions in the use site.
+            let meta_span = spec_expr.span;
+            spec_expr = self.wrap_obj_with_template_meta(spec_expr, base, type_args, &spec_ty, meta_span)?;
         }
 
         self.out_specs.push(Stmt::new(
             StmtKind::Let {
+                is_const: false,
                 exported: false,
                 name: nm.clone(),
                 type_params: Vec::new(),
                 ty: Some(spec_ty),
                 expr: spec_expr,
             },
-            def.span,
+            // Use the instantiation site span so different specializations don't collide in
+            // semantic side tables keyed by `Span`.
+            use_span,
         ));
 
         self.emitted.insert(nm.clone());
@@ -650,6 +852,7 @@ impl Expander {
     fn rewrite_stmt(&mut self, s: &Stmt) -> Result<Stmt, CompileError> {
         let node = match &s.node {
             StmtKind::Let {
+                is_const: _,
                 exported,
                 name,
                 type_params,
@@ -667,6 +870,7 @@ impl Expander {
                     self.known_vars.insert(name.clone(), t.clone());
                 }
                 StmtKind::Let {
+                    is_const: false,
                     exported: *exported,
                     name: name.clone(),
                     type_params: Vec::new(),
@@ -759,6 +963,7 @@ pub fn expand_templates(prog: &mut Program) -> Result<(), CompileError> {
                 let obj_expr = Expr::new(ExprKind::ObjLit(fields.clone()), s.span);
                 desugared.push(Stmt::new(
                     StmtKind::Let {
+                        is_const: false,
                         exported: *exported,
                         name: name.clone(),
                         type_params: type_params.clone(),
@@ -777,6 +982,7 @@ pub fn expand_templates(prog: &mut Program) -> Result<(), CompileError> {
     let mut templates: HashMap<String, TemplateDef> = HashMap::new();
     for s in &prog.stmts {
         if let StmtKind::Let {
+            is_const: _,
             exported,
             name,
             type_params,

@@ -78,7 +78,7 @@ static int run_and_expect_ok_bytes(const char* out_path) {
 
 int main(int argc, char** argv) {
   if(argc != 5) {
-    fprintf(stderr, "usage: %s <jellyc_bin> <backend ast|ir> <input.jelly> <out.jlyb>\n",
+    fprintf(stderr, "usage: %s <jellyc_bin> <backend ir> <input.jelly> <out.jlyb>\n",
             argv[0] ? argv[0] : "jellyc_jelly_test");
     return 2;
   }
@@ -87,7 +87,7 @@ int main(int argc, char** argv) {
   const char* in_path = argv[3];
   const char* out_path = argv[4];
 
-  if(strcmp(backend, "ast") != 0 && strcmp(backend, "ir") != 0) {
+  if(strcmp(backend, "ir") != 0) {
     fprintf(stderr, "bad backend: %s\n", backend);
     return 2;
   }

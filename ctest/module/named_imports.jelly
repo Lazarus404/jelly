@@ -1,0 +1,7 @@
+import {add} from math;
+import {x as y} from consts;
+
+let h: I32 = add(y, 3);
+let r = if (h == 7) { "ok" } else { "bad" };
+System.assert(r == "ok");
+r

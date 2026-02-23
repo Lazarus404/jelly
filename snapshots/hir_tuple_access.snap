@@ -1,0 +1,31 @@
+hir {
+  let t @0..18 : Tuple<I32, Bytes>
+    TupleLit(2) : Tuple<I32, Bytes> @8..17
+      I32Lit(1) : I32 @9..10
+      BytesLit : Bytes @12..16
+  let a: Named("I32") @19..36 : I32
+    Member(.0) : I32 @32..35
+      Var(t) : Tuple<I32, Bytes> @32..33
+  let b: Named("Bytes") @37..56 : Bytes
+    Member(.1) : Bytes @52..55
+      Var(t) : Tuple<I32, Bytes> @52..53
+  stmt_expr @57..79
+    Call : Bool @57..78
+      Member(.assert) : (Bool) -> Bool @57..70
+        Var(System) : ? @57..63
+      Eq : Bool @71..77
+        Var(a) : I32 @71..72
+        I32Lit(1) : I32 @76..77
+  stmt_expr @80..113
+    Call : Bool @80..112
+      Member(.assert) : (Bool) -> Bool @80..93
+        Var(System) : ? @80..86
+      Eq : Bool @94..111
+        Call : I32 @94..106
+          Member(.len) : (Bytes) -> I32 @94..103
+            Var(Bytes) : ? @94..99
+          Var(b) : Bytes @104..105
+        I32Lit(2) : I32 @110..111
+  expr:
+    BytesLit : Bytes @114..118
+}

@@ -1,0 +1,21 @@
+hir {
+  import math as Math @0..20
+  let r: Named("I32") @21..49 : I32
+    Call : I32 @34..48
+      Member(.add) : (I32, I32) -> I32 @34..42
+        Var(Math) : Object @34..38
+      I32Lit(1) : I32 @43..44
+      I32Lit(2) : I32 @46..47
+  expr:
+    If : Bytes @50..85
+      cond:
+        Eq : Bool @54..60
+          Var(r) : I32 @54..55
+          I32Lit(3) : I32 @59..60
+      then:
+        Block : Bytes @62..70
+          BytesLit : Bytes @64..68
+      else:
+        Block : Bytes @76..85
+          BytesLit : Bytes @78..83
+}

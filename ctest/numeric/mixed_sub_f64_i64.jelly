@@ -1,0 +1,6 @@
+let d : I64 = 2147483700;
+let e : F64 = 2147483700.5;
+let f = e - d;
+let r = if (f == 0.5) { "ok" } else { "bad" };
+System.assert(r == "ok");
+r

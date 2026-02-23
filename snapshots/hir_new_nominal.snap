@@ -1,0 +1,16 @@
+hir {
+  let proto: Named("Foo") @0..26 : Object#0c7e1677
+    ObjLit(1) : Object#0c7e1677 @17..25
+      field a:
+        I32Lit(1) : I32 @22..23
+  let inst: Named("Foo") @27..62 : Object#0c7e1677
+    New(args=2) : Object#0c7e1677 @43..61
+      Var(proto) : Object#0c7e1677 @47..52
+      I32Lit(2) : I32 @53..54
+      BytesLit : Bytes @56..60
+  let _ @63..78
+    Member(.a) : Dynamic @71..77
+      Var(inst) : Object#0c7e1677 @71..75
+  expr:
+    BytesLit : Bytes @79..83
+}

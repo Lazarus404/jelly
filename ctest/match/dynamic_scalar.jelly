@@ -1,0 +1,9 @@
+let o = {a: 1, b: true};
+let x = o.a;
+let r = match (x) {
+  true => { "bad" },
+  1 => { "ok" },
+  _ => { "bad" },
+};
+System.assert(r == "ok");
+r

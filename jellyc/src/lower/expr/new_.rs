@@ -31,6 +31,7 @@
 
 use crate::ast::Span;
 use crate::error::{CompileError, ErrorKind};
+use crate::hir::NodeId;
 use crate::ir::{IrBuilder, IrOp, IrTerminator, TypeId, VRegId};
 
 use super::{is_object_kind, lower_expr, LowerCtx};
@@ -40,7 +41,6 @@ pub fn lower_new_expr(
     e: &crate::ast::Expr,
     proto: &crate::ast::Expr,
     args: &[crate::ast::Expr],
-    expect: Option<TypeId>,
     ctx: &mut LowerCtx,
     b: &mut IrBuilder,
 ) -> Result<(VRegId, TypeId), CompileError> {
@@ -53,24 +53,27 @@ pub fn lower_new_expr(
         ));
     }
 
-    // Type of the allocated instance:
-    // - default: use the prototype's (possibly nominal) type
-    // - allow erasure to plain Object if context expects Object
-    // - otherwise, require the expected nominal type to match the prototype's nominal type
-    let self_tid = match expect {
-        Some(et) if et == T_OBJECT => T_OBJECT,
-        Some(et) if is_object_kind(&ctx.type_ctx, et) => {
-            if et != t_proto {
-                return Err(CompileError::new(
-                    ErrorKind::Type,
-                    e.span,
-                    "new: expected object type does not match prototype type",
-                ));
-            }
-            et
-        }
-        _ => t_proto,
-    };
+    // The allocated instance type is decided by semantic analysis.
+    let self_tid = ctx
+        .sem_expr_types
+        .get(&NodeId(e.span))
+        .copied()
+        .ok_or_else(|| CompileError::new(ErrorKind::Internal, e.span, "missing semantic type for new expression"))?;
+    if !is_object_kind(&ctx.type_ctx, self_tid) {
+        return Err(CompileError::new(
+            ErrorKind::Internal,
+            e.span,
+            "new expression has non-object semantic type",
+        ));
+    }
+    // Preserve nominal object kinds, but allow erasure to plain Object.
+    if self_tid != t_proto && self_tid != T_OBJECT {
+        return Err(CompileError::new(
+            ErrorKind::Internal,
+            e.span,
+            "semantic type mismatch for new expression",
+        ));
+    }
     let v_self = b.new_vreg(self_tid);
     b.emit(e.span, IrOp::ObjNew { dst: v_self });
     b.emit(

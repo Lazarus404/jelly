@@ -33,6 +33,7 @@ use std::collections::HashMap;
 
 use crate::ast::{Expr, Span};
 use crate::error::{CompileError, ErrorKind};
+use crate::hir::NodeId;
 use crate::ir::{BlockId, IrBuilder, IrOp, IrTerminator, TypeId, VRegId};
 
 use crate::lower::{bind_local, intern_atom, lookup_var, lower_stmt, LowerCtx};
@@ -140,10 +141,14 @@ pub fn lower_match_expr(
     e: &Expr,
     subject: &Expr,
     arms: &[crate::ast::MatchArm],
-    expect: Option<TypeId>,
     ctx: &mut LowerCtx,
     b: &mut IrBuilder,
 ) -> Result<(VRegId, TypeId), CompileError> {
+            let out_tid = ctx
+                .sem_expr_types
+                .get(&NodeId(e.span))
+                .copied()
+                .ok_or_else(|| CompileError::new(ErrorKind::Internal, e.span, "missing semantic type for match"))?;
             if arms.is_empty() {
                 return Err(CompileError::new(ErrorKind::Type, e.span, "match must have at least one arm"));
             }
@@ -176,7 +181,7 @@ pub fn lower_match_expr(
                 b.set_block(nb);
             }
 
-            let (v_subj, t_subj) = lower_expr_expect(subject, None, ctx, b)?;
+            let (v_subj, t_subj) = lower_expr_expect(subject, ctx, b)?;
 
             // Special case: matching on a Dynamic subject with scalar-only patterns.
             // This is the first place where `KINDOF` + `SWITCH_KIND` is a clear win.
@@ -194,12 +199,11 @@ pub fn lower_match_expr(
                     )
                 });
                 if scalar_ok {
-                    return lower_match_dynamic_scalar(e, v_subj, arms, expect, ctx, b);
+                    return lower_match_dynamic_scalar(e, v_subj, arms, out_tid, ctx, b);
                 }
             }
 
-            let mut out_tid: Option<TypeId> = expect;
-            let mut v_out: Option<VRegId> = out_tid.map(|t| b.new_vreg(t));
+            let v_out: Option<VRegId> = Some(b.new_vreg(out_tid));
 
             // Pre-create check/bind/guard/body blocks.
             let mut check_bs = Vec::with_capacity(arms.len());
@@ -1126,7 +1130,7 @@ pub fn lower_match_expr(
 
                     b.set_block(gb);
                     let w = arms[i].when.as_ref().expect("guard block implies when");
-                    let (v_w, t_w) = lower_expr_expect(w, None, ctx, b)?;
+                    let (v_w, t_w) = lower_expr_expect(w, ctx, b)?;
                     if t_w != T_BOOL {
                         return Err(CompileError::new(
                             ErrorKind::Type,
@@ -1158,23 +1162,12 @@ pub fn lower_match_expr(
                 }
 
                 if let Some(tail) = &arms[i].tail {
-                    let (v_tail, t_tail) = match out_tid {
-                        Some(t) => lower_expr_expect(tail, Some(t), ctx, b)?,
-                        None => {
-                            let (v, t) = lower_expr_expect(tail, None, ctx, b)?;
-                            out_tid = Some(t);
-                            if v_out.is_none() {
-                                v_out = Some(b.new_vreg(t));
-                            }
-                            (v, t)
-                        }
-                    };
-                    let ot = out_tid.expect("set above");
-                    if t_tail != ot {
+                    let (v_tail, t_tail) = lower_expr_expect(tail, ctx, b)?;
+                    if t_tail != out_tid {
                         return Err(CompileError::new(
-                            ErrorKind::Type,
+                            ErrorKind::Internal,
                             tail.span,
-                            "match arm value type mismatch",
+                            "semantic type mismatch for match arm value",
                         ));
                     }
                     let dst = v_out.expect("match output");
@@ -1188,19 +1181,16 @@ pub fn lower_match_expr(
                 }
             }
 
-            let ot = out_tid.ok_or_else(|| {
-                CompileError::new(ErrorKind::Type, e.span, "match has no value-producing arms")
-            })?;
-            let dst = v_out.expect("allocated when type known");
+            let dst = v_out.expect("match output");
             b.set_block(join_b);
-            Ok((dst, ot))
+            Ok((dst, out_tid))
 }
 
 fn lower_match_dynamic_scalar(
     e: &Expr,
     v_subj: VRegId,
     arms: &[crate::ast::MatchArm],
-    expect: Option<TypeId>,
+    out_tid: TypeId,
     ctx: &mut LowerCtx,
     b: &mut IrBuilder,
 ) -> Result<(VRegId, TypeId), CompileError> {
@@ -1236,8 +1226,7 @@ fn lower_match_dynamic_scalar(
         b.set_block(nb);
     }
 
-    let mut out_tid: Option<TypeId> = expect;
-    let mut v_out: Option<VRegId> = out_tid.map(|t| b.new_vreg(t));
+    let v_out: Option<VRegId> = Some(b.new_vreg(out_tid));
 
     // Shared blocks per arm (bind/guard/body), and per-kind check chains.
     let mut bind_bs = Vec::with_capacity(arms.len());
@@ -1443,7 +1432,7 @@ fn lower_match_dynamic_scalar(
             b.term(IrTerminator::Jmp { target: gb });
             b.set_block(gb);
             let w = arms[i].when.as_ref().expect("guard block implies when");
-            let (v_w, t_w) = lower_expr_expect(w, None, ctx, b)?;
+            let (v_w, t_w) = lower_expr_expect(w, ctx, b)?;
             if t_w != T_BOOL {
                 return Err(CompileError::new(ErrorKind::Type, w.span, "match when guard must be bool"));
             }
@@ -1467,20 +1456,13 @@ fn lower_match_dynamic_scalar(
         }
 
         if let Some(tail) = &arms[i].tail {
-            let (v_tail, t_tail) = match out_tid {
-                Some(t) => lower_expr_expect(tail, Some(t), ctx, b)?,
-                None => {
-                    let (v, t) = lower_expr_expect(tail, None, ctx, b)?;
-                    out_tid = Some(t);
-                    if v_out.is_none() {
-                        v_out = Some(b.new_vreg(t));
-                    }
-                    (v, t)
-                }
-            };
-            let ot = out_tid.expect("set above");
-            if t_tail != ot {
-                return Err(CompileError::new(ErrorKind::Type, tail.span, "match arm value type mismatch"));
+            let (v_tail, t_tail) = lower_expr_expect(tail, ctx, b)?;
+            if t_tail != out_tid {
+                return Err(CompileError::new(
+                    ErrorKind::Internal,
+                    tail.span,
+                    "semantic type mismatch for match arm value",
+                ));
             }
             let dst = v_out.expect("match output");
             b.emit(e.span, IrOp::Mov { dst, src: v_tail });
@@ -1492,8 +1474,7 @@ fn lower_match_dynamic_scalar(
         }
     }
 
-    let ot = out_tid.ok_or_else(|| CompileError::new(ErrorKind::Type, e.span, "match has no value-producing arms"))?;
     let dst = v_out.expect("allocated when type known");
     b.set_block(join_b);
-    Ok((dst, ot))
+    Ok((dst, out_tid))
 }

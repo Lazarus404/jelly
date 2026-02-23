@@ -1,0 +1,42 @@
+ir {
+  funcs: 1
+  entry: 0
+  fn[0] main params=0 entry=b0
+    vregs:
+      v0: Object
+      v1: Object#0c7e1677
+      v2: I32
+      v3: Object#0c7e1677
+      v4: Bool
+      v5: I32
+      v6: Bytes
+      v7: (Object, I32, Bytes) -> Object
+      v8: Object
+      v9: I32
+      v10: Bytes
+      v11: Object
+      v12: Dynamic
+      v13: Bytes
+    b0 (entry):
+      @0..0 ObjNew { dst: v0 }
+      @17..25 ObjNew { dst: v1 }
+      @22..23 ConstI32 { dst: v2, imm: 1 }
+      @17..25 ObjSetAtom { obj: v1, atom: "a", value: v2 }
+      @43..61 ObjNew { dst: v3 }
+      @43..61 ObjSetAtom { obj: v3, atom: "__proto__", value: v1 }
+      @43..61 ObjHasAtom { dst: v4, obj: v1, atom: "init" }
+      term: JmpIf { cond: v4, then_tgt: b1, else_tgt: b2 }
+    b1 (new_init):
+      @53..54 ConstI32 { dst: v5, imm: 2 }
+      @56..60 ConstBytes { dst: v6, len: 2 }
+      @43..61 ObjGetAtom { dst: v7, obj: v1, atom: "init" }
+      @43..61 Mov { dst: v8, src: v3 }
+      @53..54 Mov { dst: v9, src: v5 }
+      @56..60 Mov { dst: v10, src: v6 }
+      @43..61 Call { dst: v11, callee: v7, sig_id: 0, arg_base: v8, nargs: 3 }
+      term: Jmp { target: b2 }
+    b2 (new_join):
+      @71..77 ObjGetAtom { dst: v12, obj: v3, atom: "a" }
+      @79..83 ConstBytes { dst: v13, len: 2 }
+      term: Ret { value: v13 }
+}

@@ -7,6 +7,7 @@ use crate::typectx::TypeCtx;
 use crate::typectx::{T_DYNAMIC, T_OBJECT};
 
 mod fn_infer;
+mod const_eval;
 mod typecheck;
 
 pub fn analyze_program(p: &Program) -> Result<(HirProgram, SemanticInfo), CompileError> {

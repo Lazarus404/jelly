@@ -27,29 +27,21 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-// Compilation orchestration: AST and IR backend entry points.
+// Compilation orchestration: IR backend entry points.
 
 use std::collections::HashMap;
 use std::path::Path;
 
 use crate::error::CompileError;
-use crate::ir_codegen;
+use crate::ir;
+use crate::codegen;
 use crate::jlyb::{self, Module};
 use crate::link;
 use crate::lower;
 use crate::opt;
-use crate::parse;
 use crate::phi;
-use crate::resolve;
 use crate::semantic;
-use crate::templates;
 use crate::typectx::TypeRepr;
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Backend {
-    Ast,
-    Ir,
-}
 
 /// Unified error type for compilation failures.
 pub enum CompileFailure {
@@ -77,16 +69,6 @@ pub fn compile_prelude(out: &Path) -> Result<(), CompileError> {
         CompileError::new(crate::error::ErrorKind::Codegen, crate::ast::Span::point(0), format!("{}", e))
     })?;
     Ok(())
-}
-
-pub fn compile_file_ast(input: &Path) -> Result<Module, CompileError> {
-    let src = std::fs::read_to_string(input)
-        .map_err(|e| CompileError::new(crate::error::ErrorKind::Codegen, crate::ast::Span::point(0), format!("{}", e)))?;
-    let mut prog = parse::parse_program(&src)?;
-    templates::expand_templates(&mut prog)?;
-    resolve::resolve_program(&prog)?;
-    let (hir, _info) = semantic::analyze_program(&prog)?;
-    jlyb::build_program_module(&hir.program)
 }
 
 pub fn compile_file_ir(input: &Path) -> Result<Module, CompileFailure> {
@@ -135,21 +117,45 @@ pub fn compile_file_ir(input: &Path) -> Result<Module, CompileFailure> {
                     eprintln!("{}", w.render(src, Some(&path.display().to_string())));
                 }
                 let mut irm = lowered.ir;
-                phi::eliminate_phis(&mut irm).map_err(|err| CompileFailure::Compile {
-                    err,
-                    src: src.clone(),
-                    path: Some(path.display().to_string()),
-                })?;
                 opt::run_passes(&mut irm).map_err(|err| CompileFailure::Compile {
                     err,
                     src: src.clone(),
                     path: Some(path.display().to_string()),
                 })?;
-                let mut bc = ir_codegen::emit_ir_module(&irm).map_err(|err| CompileFailure::Compile {
+                if std::env::var("JELLYC_DUMP_IR_POSTOPT").is_ok() {
+                    println!("-- IR postopt module: {} --", n.key);
+                    print!("{}", ir::render_ir(&irm));
+                }
+                phi::eliminate_phis(&mut irm).map_err(|err| CompileFailure::Compile {
                     err,
                     src: src.clone(),
                     path: Some(path.display().to_string()),
                 })?;
+                if std::env::var("JELLYC_DUMP_IR_POSTPHI").is_ok() {
+                    println!("-- IR postphi module: {} --", n.key);
+                    print!("{}", ir::render_ir(&irm));
+                }
+                opt::run_post_phi_cleanup(&mut irm);
+                if std::env::var("JELLYC_DUMP_IR_POSTPHICLEAN").is_ok() {
+                    println!("-- IR postphi(clean) module: {} --", n.key);
+                    print!("{}", ir::render_ir(&irm));
+                }
+                let mut bc = codegen::emit_ir_module(&irm).map_err(|err| CompileFailure::Compile {
+                    err,
+                    src: src.clone(),
+                    path: Some(path.display().to_string()),
+                })?;
+                if let Err(msg) = jlyb::validate_module(&bc) {
+                    return Err(CompileFailure::Compile {
+                        err: CompileError::new(
+                            crate::error::ErrorKind::Codegen,
+                            crate::ast::Span::point(0),
+                            format!("bytecode validation failed: {msg}"),
+                        ),
+                        src: src.clone(),
+                        path: Some(path.display().to_string()),
+                    });
+                }
                 let abi_blob = link::build_module_abi_blob(&lowered.exports, &lowered.import_keys);
                 bc.const_bytes.push(abi_blob);
                 artifacts.push(bc);
@@ -160,6 +166,9 @@ pub fn compile_file_ir(input: &Path) -> Result<Module, CompileFailure> {
         }
     }
 
-    link::link_modules_and_build_entry(&artifacts, &import_lists, entry_idx)
-        .map_err(CompileFailure::Link)
+    let out = link::link_modules_and_build_entry(&artifacts, &import_lists, entry_idx).map_err(CompileFailure::Link)?;
+    if let Err(msg) = jlyb::validate_module(&out) {
+        return Err(CompileFailure::Link(format!("linked bytecode validation failed: {msg}")));
+    }
+    Ok(out)
 }

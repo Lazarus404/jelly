@@ -10,6 +10,10 @@ use crate::typectx::{
 #[derive(Clone, Copy, Debug)]
 pub enum ArgConstraint {
     Exact(TypeId),
+    /// Any nominal object kind (including plain `object`).
+    ///
+    /// Note: `dynamic` is allowed by semantic analysis (it can be coerced to `object`).
+    ObjectKind,
     Numeric,
     Any,
 }
@@ -18,6 +22,182 @@ pub enum ArgConstraint {
 pub struct BuiltinConstraints {
     pub args: Vec<ArgConstraint>,
     pub ret: TypeId,
+}
+
+pub fn array_elem_tid(arr_tid: TypeId) -> Option<TypeId> {
+    match arr_tid {
+        T_ARRAY_I32 => Some(T_I32),
+        T_ARRAY_BYTES => Some(T_BYTES),
+        _ => None,
+    }
+}
+
+pub fn array_constraints_from_arr_tid(
+    name: &str,
+    args_len: usize,
+    arr_tid: TypeId,
+    span: Span,
+) -> Result<Option<BuiltinConstraints>, CompileError> {
+    fn err(span: Span, msg: impl Into<String>) -> CompileError {
+        CompileError::new(ErrorKind::Type, span, msg)
+    }
+
+    match name {
+        "len" => {
+            if args_len != 1 {
+                return Err(err(span, "Array.len expects 1 arg"));
+            }
+            if arr_tid != T_ARRAY_I32 && arr_tid != T_ARRAY_BYTES {
+                return Err(err(span, "Array.len expects Array<T>"));
+            }
+            Ok(Some(BuiltinConstraints {
+                args: vec![ArgConstraint::Exact(arr_tid)],
+                ret: T_I32,
+            }))
+        }
+        "get" => {
+            if args_len != 2 {
+                return Err(err(span, "Array.get expects 2 args"));
+            }
+            let Some(elem_tid) = array_elem_tid(arr_tid) else {
+                return Err(err(span, "Array.get expects Array<I32> or Array<Bytes>"));
+            };
+            Ok(Some(BuiltinConstraints {
+                args: vec![ArgConstraint::Exact(arr_tid), ArgConstraint::Exact(T_I32)],
+                ret: elem_tid,
+            }))
+        }
+        "set" => {
+            if args_len != 3 {
+                return Err(err(span, "Array.set expects 3 args"));
+            }
+            let Some(elem_tid) = array_elem_tid(arr_tid) else {
+                return Err(err(span, "Array.set expects Array<I32> or Array<Bytes>"));
+            };
+            Ok(Some(BuiltinConstraints {
+                args: vec![
+                    ArgConstraint::Exact(arr_tid),
+                    ArgConstraint::Exact(T_I32),
+                    ArgConstraint::Exact(elem_tid),
+                ],
+                ret: arr_tid,
+            }))
+        }
+        _ => Ok(None),
+    }
+}
+
+pub fn list_elem_tid(list_tid: TypeId) -> Option<TypeId> {
+    match list_tid {
+        T_LIST_I32 => Some(T_I32),
+        T_LIST_BYTES => Some(T_BYTES),
+        _ => None,
+    }
+}
+
+pub fn list_constraints_from_list_tid(
+    name: &str,
+    args_len: usize,
+    list_tid: TypeId,
+    span: Span,
+) -> Result<Option<BuiltinConstraints>, CompileError> {
+    fn err(span: Span, msg: impl Into<String>) -> CompileError {
+        CompileError::new(ErrorKind::Type, span, msg)
+    }
+
+    match name {
+        "head" => {
+            if args_len != 1 {
+                return Err(err(span, "List.head expects 1 arg"));
+            }
+            let Some(elem_tid) = list_elem_tid(list_tid) else {
+                return Err(err(span, "List.head expects List<I32> or List<Bytes>"));
+            };
+            Ok(Some(BuiltinConstraints {
+                args: vec![ArgConstraint::Exact(list_tid)],
+                ret: elem_tid,
+            }))
+        }
+        "tail" => {
+            if args_len != 1 {
+                return Err(err(span, "List.tail expects 1 arg"));
+            }
+            if list_elem_tid(list_tid).is_none() {
+                return Err(err(span, "List.tail expects List<I32> or List<Bytes>"));
+            }
+            Ok(Some(BuiltinConstraints {
+                args: vec![ArgConstraint::Exact(list_tid)],
+                ret: list_tid,
+            }))
+        }
+        "is_nil" => {
+            if args_len != 1 {
+                return Err(err(span, "List.is_nil expects 1 arg"));
+            }
+            if list_elem_tid(list_tid).is_none() {
+                return Err(err(span, "List.is_nil expects List<I32> or List<Bytes>"));
+            }
+            Ok(Some(BuiltinConstraints {
+                args: vec![ArgConstraint::Exact(list_tid)],
+                ret: T_BOOL,
+            }))
+        }
+        _ => Ok(None),
+    }
+}
+
+pub fn object_get_ret_tid(
+    type_args: &[Ty],
+    expect: Option<TypeId>,
+    tc: &mut TypeCtx,
+    span: Span,
+) -> Result<TypeId, CompileError> {
+    fn is_numeric_tid(tid: TypeId) -> bool {
+        matches!(tid, T_I8 | T_I16 | T_I32 | T_I64 | T_F16 | T_F32 | T_F64)
+    }
+
+    fn is_object_kind_tid(tc: &TypeCtx, tid: TypeId) -> bool {
+        if tc.is_tuple_type(tid) {
+            return false;
+        }
+        tc.types
+            .get(tid as usize)
+            .is_some_and(|te| te.kind == crate::jlyb::TypeKind::Object)
+    }
+
+    fn is_supported_object_get_ret_tid(tc: &TypeCtx, tid: TypeId) -> bool {
+        tid == T_DYNAMIC
+            || tid == T_BOOL
+            || tid == T_BYTES
+            || tid == T_OBJECT
+            || tid == T_ARRAY_I32
+            || tid == T_ARRAY_BYTES
+            || tid == T_LIST_I32
+            || tid == T_LIST_BYTES
+            || is_numeric_tid(tid)
+            || is_object_kind_tid(tc, tid)
+    }
+
+    let tid = if type_args.is_empty() {
+        expect.unwrap_or(T_DYNAMIC)
+    } else if type_args.len() == 1 {
+        tc.resolve_ty(&type_args[0])?
+    } else {
+        return Err(CompileError::new(
+            ErrorKind::Type,
+            span,
+            "Object.get<T>(obj, key): expects 1 type arg",
+        ));
+    };
+
+    if !is_supported_object_get_ret_tid(tc, tid) {
+        return Err(CompileError::new(
+            ErrorKind::Type,
+            span,
+            "Object.get cannot produce this type",
+        ));
+    }
+    Ok(tid)
 }
 
 fn builtin_name(callee: &Expr) -> Option<(&str, &str)> {
@@ -163,15 +343,9 @@ pub fn builtin_constraints(
             if args_len != 2 {
                 return Err(err(span, "Object.get expects 2 args"));
             }
-            let ret = if type_args.is_empty() {
-                expect.unwrap_or(T_DYNAMIC)
-            } else if type_args.len() == 1 {
-                tc.resolve_ty(&type_args[0])?
-            } else {
-                return Err(err(span, "Object.get<T>(obj, key): expects 1 type arg"));
-            };
+            let ret = object_get_ret_tid(type_args, expect, tc, span)?;
             Ok(Some(BuiltinConstraints {
-                args: vec![ArgConstraint::Exact(T_OBJECT), ArgConstraint::Exact(T_ATOM)],
+                args: vec![ArgConstraint::ObjectKind, ArgConstraint::Exact(T_ATOM)],
                 ret,
             }))
         }
@@ -181,8 +355,10 @@ pub fn builtin_constraints(
                 return Err(err(span, "Object.set expects 3 args"));
             }
             Ok(Some(BuiltinConstraints {
-                args: vec![ArgConstraint::Exact(T_OBJECT), ArgConstraint::Exact(T_ATOM), ArgConstraint::Any],
-                ret: T_OBJECT,
+                args: vec![ArgConstraint::ObjectKind, ArgConstraint::Exact(T_ATOM), ArgConstraint::Any],
+                // Lowering/semantic may preserve nominal object kinds here; allow the contextual
+                // expected type to drive the return type when available.
+                ret: expect.unwrap_or(T_OBJECT),
             }))
         }
         ("Array", "new") => {
@@ -295,7 +471,24 @@ pub fn builtin_constraints(
                     ret: list_tid,
                 }));
             }
-            Ok(Some(BuiltinConstraints { args: vec![ArgConstraint::Any, ArgConstraint::Any], ret: T_DYNAMIC }))
+            if let Some(t) = expect {
+                if t == T_LIST_I32 {
+                    return Ok(Some(BuiltinConstraints {
+                        args: vec![ArgConstraint::Exact(T_I32), ArgConstraint::Exact(T_LIST_I32)],
+                        ret: T_LIST_I32,
+                    }));
+                }
+                if t == T_LIST_BYTES {
+                    return Ok(Some(BuiltinConstraints {
+                        args: vec![ArgConstraint::Exact(T_BYTES), ArgConstraint::Exact(T_LIST_BYTES)],
+                        ret: T_LIST_BYTES,
+                    }));
+                }
+            }
+            Ok(Some(BuiltinConstraints {
+                args: vec![ArgConstraint::Any, ArgConstraint::Any],
+                ret: T_DYNAMIC,
+            }))
         }
         ("List", "head") => {
             no_targs("List.head")?;

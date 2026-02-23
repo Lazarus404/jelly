@@ -5,9 +5,13 @@ use crate::error::{CompileError, ErrorKind};
 use crate::ir::TypeId;
 use crate::typectx::{
     TypeCtx, T_ATOM, T_BOOL, T_BYTES, T_DYNAMIC, T_F16, T_F32, T_F64, T_I16, T_I32, T_I64, T_I8,
+    T_OBJECT,
 };
 
-use crate::builtin_constraints::{builtin_constraints, ArgConstraint};
+use crate::builtin_constraints::{
+    array_constraints_from_arr_tid, builtin_constraints, list_constraints_from_list_tid,
+    ArgConstraint,
+};
 
 #[derive(Clone, Copy, Debug)]
 enum ITy {
@@ -264,6 +268,13 @@ pub fn infer_fn_type_for_let(
             }
         }
 
+        fn is_object_kind_tid(&self, tid: TypeId) -> bool {
+            self.type_ctx
+                .types
+                .get(tid as usize)
+                .is_some_and(|te| te.kind == crate::jlyb::TypeKind::Object)
+        }
+
         fn require_int_index(&mut self, t: ITy, span: crate::ast::Span) -> Result<(), CompileError> {
             fn ok_index_tid(tid: TypeId) -> bool {
                 matches!(tid, T_DYNAMIC | T_I8 | T_I16 | T_I32 | T_I64)
@@ -293,22 +304,74 @@ pub fn infer_fn_type_for_let(
         fn infer_stmt(&mut self, s: &Stmt) -> Result<(), CompileError> {
             match &s.node {
                 StmtKind::Let { name, ty, expr, .. } => {
-                    let et = if let Some(t) = ty { Some(self.resolve_ty_ann(t)?) } else { None };
-                    let t = self.infer_expr(expr)?;
-                    let t = if let Some(et) = et { unify(&mut self.dsu, t, ITy::Known(et))? } else { t };
+                    let et = if let Some(t) = ty {
+                        Some(self.resolve_ty_ann(t)?)
+                    } else {
+                        None
+                    };
+                    let mut t = self.infer_expr(expr)?;
+                    // `fn_infer` is a lightweight pass used only to infer the outer function's
+                    // signature. Nested function literals are treated as `Dynamic` by `infer_expr`
+                    // (we don't infer their signatures here). When there *is* an explicit
+                    // annotation on the binding, trust it to avoid spurious conflicts.
+                    if let (Some(et), ExprKind::Fn { .. }) = (et, &expr.node) {
+                        let is_fun = self
+                            .type_ctx
+                            .types
+                            .get(et as usize)
+                            .is_some_and(|te| te.kind == crate::jlyb::TypeKind::Function);
+                        if is_fun {
+                            t = ITy::Known(et);
+                        }
+                    }
+                    let t = if let Some(et) = et {
+                        unify(&mut self.dsu, t, ITy::Known(et))?
+                    } else {
+                        t
+                    };
                     self.bind(name, t);
                     Ok(())
                 }
                 StmtKind::Assign { name, expr } => {
                     if let Some(dst) = self.lookup(name) {
-                        let t = self.infer_expr(expr)?;
+                        let mut t = self.infer_expr(expr)?;
+                        // If assigning a `fn {..}` to a variable that is already known to be a
+                        // function type, trust the destination type (this pass doesn't infer
+                        // nested function signatures).
+                        if let ExprKind::Fn { .. } = &expr.node {
+                            if let Some(dst_tid) = self.resolve_known_tid(dst) {
+                                let is_fun = self
+                                    .type_ctx
+                                    .types
+                                    .get(dst_tid as usize)
+                                    .is_some_and(|te| te.kind == crate::jlyb::TypeKind::Function);
+                                if is_fun {
+                                    t = ITy::Known(dst_tid);
+                                }
+                            }
+                        }
                         let _ = unify(&mut self.dsu, dst, t)?;
                     }
                     Ok(())
                 }
                 StmtKind::Return { expr } => {
                     if let Some(e) = expr {
-                        let t = self.infer_expr(e)?;
+                        let mut t = self.infer_expr(e)?;
+                        // If returning a `fn {..}` and the return type is already constrained to
+                        // a function type, trust the constrained return type.
+                        if let ExprKind::Fn { .. } = &e.node {
+                            let cur = self.resolve_known_tid(ITy::Var(self.ret_var));
+                            if let Some(ret_tid) = cur {
+                                let is_fun = self
+                                    .type_ctx
+                                    .types
+                                    .get(ret_tid as usize)
+                                    .is_some_and(|te| te.kind == crate::jlyb::TypeKind::Function);
+                                if is_fun {
+                                    t = ITy::Known(ret_tid);
+                                }
+                            }
+                        }
                         let _ = unify(&mut self.dsu, ITy::Var(self.ret_var), t)?;
                     }
                     Ok(())
@@ -319,7 +382,8 @@ pub fn infer_fn_type_for_let(
                 }
                 StmtKind::While { cond, body } => {
                     let tc = self.infer_expr(cond)?;
-                    let _ = unify(&mut self.dsu, tc, ITy::Known(T_BOOL))?;
+                    // Jelly truthiness: loop conditions need not be `Bool`.
+                    let _ = tc;
                     self.scopes.push(HashMap::new());
                     for st in body {
                         self.infer_stmt(st)?;
@@ -412,7 +476,11 @@ pub fn infer_fn_type_for_let(
                     let tb = self.infer_expr(b)?;
                     let _ = match (ta, tb) {
                         (ITy::Known(x), ITy::Known(y)) if is_numeric(x) && is_numeric(y) => Ok(ITy::Known(join_numeric(x, y))),
+                        // Bool comparisons are truthiness-based; don't constrain the other side.
                         (ITy::Known(T_BOOL), _) | (_, ITy::Known(T_BOOL)) => Ok(ITy::Known(T_BOOL)),
+                        // `Dynamic` can flow through unknown calls/values while inferring; don't
+                        // reject the whole function type just because we can't pin it here.
+                        (ITy::Known(T_DYNAMIC), _) | (_, ITy::Known(T_DYNAMIC)) => Ok(ITy::Known(T_DYNAMIC)),
                         (x, y) => unify(&mut self.dsu, x, y),
                     }?;
                     Ok(ITy::Known(T_BOOL))
@@ -426,13 +494,16 @@ pub fn infer_fn_type_for_let(
                 ExprKind::And(a, b) | ExprKind::Or(a, b) => {
                     let ta = self.infer_expr(a)?;
                     let tb = self.infer_expr(b)?;
-                    let _ = unify(&mut self.dsu, ta, ITy::Known(T_BOOL))?;
-                    let _ = unify(&mut self.dsu, tb, ITy::Known(T_BOOL))?;
+                    // Jelly truthiness: `&&`/`||` are boolean operators, but their operands are
+                    // not required to be `Bool` (everything except `null` and `false` is truthy).
+                    // Don't constrain operand types during inference.
+                    let _ = ta;
+                    let _ = tb;
                     Ok(ITy::Known(T_BOOL))
                 }
                 ExprKind::If { cond, then_br, else_br } => {
                     let tc = self.infer_expr(cond)?;
-                    let _ = unify(&mut self.dsu, tc, ITy::Known(T_BOOL))?;
+                    let _ = tc;
                     let tt = self.infer_expr(then_br)?;
                     let te = self.infer_expr(else_br)?;
                     unify(&mut self.dsu, tt, te)
@@ -447,6 +518,134 @@ pub fn infer_fn_type_for_let(
                     Ok(t)
                 }
                 ExprKind::Call { callee, type_args, args } => {
+                    // Keep return-type-dependent builtin behavior centralized.
+                    if let ExprKind::Member { base, name } = &callee.node {
+                        if let ExprKind::Var(ns) = &base.node {
+                            if ns == "Array" && matches!(name.as_str(), "len" | "get" | "set") {
+                                if !type_args.is_empty() {
+                                    return Err(CompileError::new(
+                                        ErrorKind::Type,
+                                        e.span,
+                                        format!("Array.{} does not take type arguments", name),
+                                    ));
+                                }
+                                // Always infer args for constraints/numeric hints.
+                                if let Some(a0) = args.get(0) {
+                                    let t0 = self.infer_expr(a0)?;
+                                    if let Some(arr_tid) = self.resolve_known_tid(t0) {
+                                        if let Some(cs) = array_constraints_from_arr_tid(
+                                            name,
+                                            args.len(),
+                                            arr_tid,
+                                            e.span,
+                                        )? {
+                                            for (i, a) in args.iter().enumerate() {
+                                                let ta = self.infer_expr(a)?;
+                                                match cs.args.get(i).copied().unwrap_or(ArgConstraint::Any) {
+                                                    ArgConstraint::Exact(tid) => {
+                                                        if tid != T_DYNAMIC {
+                                                            let _ = unify(&mut self.dsu, ta, ITy::Known(tid))?;
+                                                        }
+                                                    }
+                                                    ArgConstraint::ObjectKind => match ta {
+                                                        ITy::Known(tid) => {
+                                                            if tid != T_DYNAMIC && !self.is_object_kind_tid(tid) {
+                                                                return Err(CompileError::new(
+                                                                    ErrorKind::Type,
+                                                                    e.span,
+                                                                    "builtin expects an Object",
+                                                                ));
+                                                            }
+                                                        }
+                                                        ITy::Var(v) => {
+                                                            let _ = unify(&mut self.dsu, ITy::Var(v), ITy::Known(T_OBJECT))?;
+                                                        }
+                                                    },
+                                                    ArgConstraint::Numeric => match ta {
+                                                        ITy::Known(tid) => {
+                                                            if !is_numeric(tid) {
+                                                                return Err(CompileError::new(ErrorKind::Type, e.span, "builtin expects numeric"));
+                                                            }
+                                                        }
+                                                        ITy::Var(v) => self.dsu.mark_numeric(v),
+                                                    },
+                                                    ArgConstraint::Any => {}
+                                                }
+                                            }
+                                            return Ok(ITy::Known(cs.ret));
+                                        }
+                                    }
+                                }
+                                // Unknown array type → ambiguous for inference.
+                                for a in args {
+                                    let _ = self.infer_expr(a)?;
+                                }
+                                return Ok(ITy::Known(T_DYNAMIC));
+                            }
+
+                            if ns == "List" && matches!(name.as_str(), "head" | "tail" | "is_nil") {
+                                if !type_args.is_empty() {
+                                    return Err(CompileError::new(
+                                        ErrorKind::Type,
+                                        e.span,
+                                        format!("List.{} does not take type arguments", name),
+                                    ));
+                                }
+                                if let Some(a0) = args.get(0) {
+                                    let t0 = self.infer_expr(a0)?;
+                                    if let Some(list_tid) = self.resolve_known_tid(t0) {
+                                        if let Some(cs) =
+                                            list_constraints_from_list_tid(name, args.len(), list_tid, e.span)?
+                                        {
+                                            for (i, a) in args.iter().enumerate() {
+                                                let ta = self.infer_expr(a)?;
+                                                match cs.args.get(i).copied().unwrap_or(ArgConstraint::Any) {
+                                                    ArgConstraint::Exact(tid) => {
+                                                        if tid != T_DYNAMIC {
+                                                            let _ = unify(&mut self.dsu, ta, ITy::Known(tid))?;
+                                                        }
+                                                    }
+                                                    ArgConstraint::ObjectKind => match ta {
+                                                        ITy::Known(tid) => {
+                                                            if tid != T_DYNAMIC && !self.is_object_kind_tid(tid) {
+                                                                return Err(CompileError::new(
+                                                                    ErrorKind::Type,
+                                                                    e.span,
+                                                                    "builtin expects an Object",
+                                                                ));
+                                                            }
+                                                        }
+                                                        ITy::Var(v) => {
+                                                            let _ = unify(&mut self.dsu, ITy::Var(v), ITy::Known(T_OBJECT))?;
+                                                        }
+                                                    },
+                                                    ArgConstraint::Numeric => match ta {
+                                                        ITy::Known(tid) => {
+                                                            if !is_numeric(tid) {
+                                                                return Err(CompileError::new(
+                                                                    ErrorKind::Type,
+                                                                    e.span,
+                                                                    "builtin expects numeric",
+                                                                ));
+                                                            }
+                                                        }
+                                                        ITy::Var(v) => self.dsu.mark_numeric(v),
+                                                    },
+                                                    ArgConstraint::Any => {}
+                                                }
+                                            }
+                                            return Ok(ITy::Known(cs.ret));
+                                        }
+                                    }
+                                }
+                                for a in args {
+                                    let _ = self.infer_expr(a)?;
+                                }
+                                return Ok(ITy::Known(T_DYNAMIC));
+                            }
+                        }
+                    }
+
                     if let Some(cs) = builtin_constraints(callee, type_args, args.len(), None, self.type_ctx, true, e.span)? {
                         for (i, a) in args.iter().enumerate() {
                             let ta = self.infer_expr(a)?;
@@ -456,6 +655,16 @@ pub fn infer_fn_type_for_let(
                                         let _ = unify(&mut self.dsu, ta, ITy::Known(tid))?;
                                     }
                                 }
+                                ArgConstraint::ObjectKind => match ta {
+                                    ITy::Known(tid) => {
+                                        if tid != T_DYNAMIC && !self.is_object_kind_tid(tid) {
+                                            return Err(CompileError::new(ErrorKind::Type, e.span, "builtin expects an Object"));
+                                        }
+                                    }
+                                    ITy::Var(v) => {
+                                        let _ = unify(&mut self.dsu, ITy::Var(v), ITy::Known(T_OBJECT))?;
+                                    }
+                                },
                                 ArgConstraint::Numeric => match ta {
                                     ITy::Known(tid) => {
                                         if !is_numeric(tid) {

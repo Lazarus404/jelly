@@ -1,0 +1,81 @@
+ir {
+  funcs: 1
+  entry: 0
+  fn[0] main params=0 entry=b0
+    vregs:
+      v0: Object
+      v1: Object
+      v2: I32
+      v3: Dynamic
+      v4: Dynamic
+      v5: Bytes
+      v6: I32
+      v7: I32
+      v8: I32
+      v9: Bool
+      v10: Bytes
+      v11: I32
+      v12: I32
+      v13: Bool
+      v14: Bytes
+      v15: Bytes
+    b0 (entry):
+      @0..0 ObjNew { dst: v0 }
+      @8..16 ObjNew { dst: v1 }
+      @13..14 ConstI32 { dst: v2, imm: 1 }
+      @8..16 ObjSetAtom { obj: v1, atom: "x", value: v2 }
+      @26..29 ObjGetAtom { dst: v3, obj: v1, atom: "x" }
+      @18..30 Mov { dst: v4, src: v3 }
+      @31..81 Kindof { dst: v6, src: v4 }
+      term: SwitchKind { kind: v6, cases: [(1, b16), (2, b5)], default: b18 }
+    b1 (dmatch_bind0):
+      term: Jmp { target: b2 }
+    b2 (dmatch_body0):
+      @47..53 ConstBytes { dst: v10, len: 4 }
+      @31..81 Mov { dst: v5, src: v10 }
+      term: Jmp { target: b19 }
+    b3 (dmatch_resume0):
+      term: SwitchKind { kind: v6, cases: [(1, b10), (2, b11)], default: b12 }
+    b4 (dmatch_check_bool0):
+      term: Jmp { target: b10 }
+    b5 (dmatch_check_i320):
+      @42..43 FromDynI32 { dst: v7, src: v4 }
+      @42..43 ConstI32 { dst: v8, imm: 0 }
+      @42..43 EqI32 { dst: v9, a: v7, b: v8 }
+      term: JmpIf { cond: v9, then_tgt: b1, else_tgt: b11 }
+    b6 (dmatch_check_other0):
+      term: Jmp { target: b12 }
+    b7 (dmatch_bind1):
+      term: Jmp { target: b8 }
+    b8 (dmatch_body1):
+      @60..65 ConstBytes { dst: v14, len: 3 }
+      @31..81 Mov { dst: v5, src: v14 }
+      term: Jmp { target: b19 }
+    b9 (dmatch_resume1):
+      term: SwitchKind { kind: v6, cases: [(1, b16), (2, b17)], default: b18 }
+    b10 (dmatch_check_bool1):
+      term: Jmp { target: b16 }
+    b11 (dmatch_check_i321):
+      @55..56 FromDynI32 { dst: v11, src: v4 }
+      @55..56 ConstI32 { dst: v12, imm: 1 }
+      @55..56 EqI32 { dst: v13, a: v11, b: v12 }
+      term: JmpIf { cond: v13, then_tgt: b7, else_tgt: b17 }
+    b12 (dmatch_check_other1):
+      term: Jmp { target: b18 }
+    b13 (dmatch_bind2):
+      term: Jmp { target: b14 }
+    b14 (dmatch_body2):
+      @72..79 ConstBytes { dst: v15, len: 5 }
+      @31..81 Mov { dst: v5, src: v15 }
+      term: Jmp { target: b19 }
+    b15 (dmatch_resume2):
+      term: Jmp { target: b19 }
+    b16 (dmatch_check_bool2):
+      term: Jmp { target: b13 }
+    b17 (dmatch_check_i322):
+      term: Jmp { target: b13 }
+    b18 (dmatch_check_other2):
+      term: Jmp { target: b13 }
+    b19 (dmatch_join):
+      term: Ret { value: v5 }
+}

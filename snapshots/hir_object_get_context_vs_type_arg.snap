@@ -1,0 +1,37 @@
+hir {
+  let o @0..12 : Object
+    ObjLit(0) : Object @8..11
+  let k @13..38 : Atom
+    Call : Atom @21..37
+      Member(.intern) : (Bytes) -> Atom @21..32
+        Var(Atom) : ? @21..25
+      BytesLit : Bytes @33..36
+  let _ @39..69
+    Call : Object @47..68
+      Member(.set) : (Object, Atom, Dynamic) -> Object @47..57
+        Var(Object) : ? @47..53
+      Var(o) : Object @58..59
+      Var(k) : Atom @61..62
+      I32Lit(123) : I32 @64..67
+  let a: Named("I32") @70..100 : I32
+    Call : I32 @83..99
+      Member(.get) : (Object, Atom) -> I32 @83..93
+        Var(Object) : ? @83..89
+      Var(o) : Object @94..95
+      Var(k) : Atom @97..98
+  let b @101..131 : I32
+    Call<1> : I32 @109..130
+      Member(.get) : (Object, Atom) -> I32 @109..119
+        Var(Object) : ? @109..115
+      Var(o) : Object @125..126
+      Var(k) : Atom @128..129
+  stmt_expr @132..154
+    Call : Bool @132..153
+      Member(.assert) : (Bool) -> Bool @132..145
+        Var(System) : ? @132..138
+      Eq : Bool @146..152
+        Var(a) : I32 @146..147
+        Var(b) : I32 @151..152
+  expr:
+    BytesLit : Bytes @155..159
+}

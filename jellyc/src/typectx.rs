@@ -31,7 +31,7 @@ use std::collections::HashMap;
 
 use crate::ast::{Span, Ty, TyKind};
 use crate::error::{CompileError, ErrorKind};
-use crate::jlyb::{FunSig, TypeEntry, TypeKind};
+use crate::jlyb::{FunSig, TypeEntry, TypeKind, Module};
 
 // Base program-module type IDs (type table indices).
 // Must match `TypeCtx::new_program_base()` and is shared across compiler pipelines.
@@ -150,24 +150,24 @@ pub fn type_repr_from_ty(t: &Ty) -> Result<TypeRepr, CompileError> {
 }
 
 /// Convert a JLYB type ID to a type representation.
-pub fn type_repr_from_jlyb(m: &crate::jlyb::Module, tid: u32) -> Result<TypeRepr, CompileError> {
+pub fn type_repr_from_jlyb(m: &Module, tid: u32) -> Result<TypeRepr, CompileError> {
     const TUPLE_TAG: u32 = 0x8000_0000;
-    fn go(m: &crate::jlyb::Module, tid: u32) -> Result<TypeRepr, CompileError> {
+    fn go(m: &Module, tid: u32) -> Result<TypeRepr, CompileError> {
         let te = m.types.get(tid as usize).ok_or_else(|| {
             CompileError::new(ErrorKind::Internal, Span::point(0), "bad type id in module ABI")
         })?;
         match te.kind {
-            crate::jlyb::TypeKind::Bytes => Ok(TypeRepr::Bytes),
-            crate::jlyb::TypeKind::Bool => Ok(TypeRepr::Bool),
-            crate::jlyb::TypeKind::I8 => Ok(TypeRepr::I8),
-            crate::jlyb::TypeKind::I16 => Ok(TypeRepr::I16),
-            crate::jlyb::TypeKind::I32 => Ok(TypeRepr::I32),
-            crate::jlyb::TypeKind::I64 => Ok(TypeRepr::I64),
-            crate::jlyb::TypeKind::F16 => Ok(TypeRepr::F16),
-            crate::jlyb::TypeKind::F32 => Ok(TypeRepr::F32),
-            crate::jlyb::TypeKind::F64 => Ok(TypeRepr::F64),
-            crate::jlyb::TypeKind::Dynamic => Ok(TypeRepr::Dynamic),
-            crate::jlyb::TypeKind::Object => {
+            TypeKind::Bytes => Ok(TypeRepr::Bytes),
+            TypeKind::Bool => Ok(TypeRepr::Bool),
+            TypeKind::I8 => Ok(TypeRepr::I8),
+            TypeKind::I16 => Ok(TypeRepr::I16),
+            TypeKind::I32 => Ok(TypeRepr::I32),
+            TypeKind::I64 => Ok(TypeRepr::I64),
+            TypeKind::F16 => Ok(TypeRepr::F16),
+            TypeKind::F32 => Ok(TypeRepr::F32),
+            TypeKind::F64 => Ok(TypeRepr::F64),
+            TypeKind::Dynamic => Ok(TypeRepr::Dynamic),
+            TypeKind::Object => {
                 if (te.p0 & TUPLE_TAG) != 0 {
                     let sig_id = te.p0 & !TUPLE_TAG;
                     let sig = m.sigs.get(sig_id as usize).ok_or_else(|| {
@@ -182,10 +182,10 @@ pub fn type_repr_from_jlyb(m: &crate::jlyb::Module, tid: u32) -> Result<TypeRepr
                     Ok(TypeRepr::Object)
                 }
             }
-            crate::jlyb::TypeKind::Atom => Ok(TypeRepr::Atom),
-            crate::jlyb::TypeKind::Array => Ok(TypeRepr::Array(Box::new(go(m, te.p0)?))),
-            crate::jlyb::TypeKind::List => Ok(TypeRepr::List(Box::new(go(m, te.p0)?))),
-            crate::jlyb::TypeKind::Function => {
+            TypeKind::Atom => Ok(TypeRepr::Atom),
+            TypeKind::Array => Ok(TypeRepr::Array(Box::new(go(m, te.p0)?))),
+            TypeKind::List => Ok(TypeRepr::List(Box::new(go(m, te.p0)?))),
+            TypeKind::Function => {
                 let sig = m.sigs.get(te.p0 as usize).ok_or_else(|| {
                     CompileError::new(ErrorKind::Internal, Span::point(0), "bad fun sig id in module ABI")
                 })?;

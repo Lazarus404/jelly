@@ -1,0 +1,18 @@
+let s = "A\u{1F600}";
+let t = `A\u{1F600}`;
+let ok =
+  (Bytes.len(s) == 5) &&
+  (Bytes.get_u8(s, 0) == 65) &&
+  (Bytes.get_u8(s, 1) == 240) &&
+  (Bytes.get_u8(s, 2) == 159) &&
+  (Bytes.get_u8(s, 3) == 152) &&
+  (Bytes.get_u8(s, 4) == 128) &&
+  (Bytes.len(t) == 5) &&
+  (Bytes.get_u8(t, 0) == 65) &&
+  (Bytes.get_u8(t, 1) == 240) &&
+  (Bytes.get_u8(t, 2) == 159) &&
+  (Bytes.get_u8(t, 3) == 152) &&
+  (Bytes.get_u8(t, 4) == 128);
+let r = if (ok) { "ok" } else { "bad" };
+System.assert(r == "ok");
+r

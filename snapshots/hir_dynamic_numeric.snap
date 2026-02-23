@@ -1,0 +1,19 @@
+hir {
+  let o @0..17 : Object
+    ObjLit(1) : Object @8..16
+      field x:
+        I32Lit(1) : I32 @13..14
+  expr:
+    If : Bytes @18..54
+      cond:
+        Lt : Bool @22..29
+          Member(.x) : I32 @22..25
+            Var(o) : Object @22..23
+          I32Lit(2) : I32 @28..29
+      then:
+        Block : Bytes @31..39
+          BytesLit : Bytes @33..37
+      else:
+        Block : Bytes @45..54
+          BytesLit : Bytes @47..52
+}

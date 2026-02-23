@@ -32,11 +32,12 @@
 use crate::ast::{Expr, ExprKind, Stmt, StmtKind};
 use crate::error::{CompileError, ErrorKind};
 use crate::ast::Span;
+use crate::hir::{ConstInit, ConstValue, NodeId};
 use crate::ir::{IrBuilder, IrOp, IrTerminator, TypeId, VRegId};
 use crate::typectx::{T_ARRAY_BYTES, T_ARRAY_I32, T_BYTES, T_F16, T_F32, T_F64, T_I16, T_I32, T_I64, T_I8};
 
 use super::{bind_local, intern_atom, lookup_var, resolve_opt_ty, FnCtx, LowerCtx, LoopTargets, T_BOOL, T_DYNAMIC};
-use super::expr::{coerce_numeric, is_narrowing_numeric, lower_expr, lower_expr_expect};
+use super::expr::{coerce_numeric, is_narrowing_numeric, lower_expr, lower_expr_expect, lower_truthy};
 
 /// Collect variable names assigned in the given statements (Assign and Let).
 fn vars_assigned_in(stmts: &[Stmt]) -> HashSet<String> {
@@ -275,6 +276,7 @@ pub fn lower_stmt(s: &Stmt, ctx: &mut LowerCtx, b: &mut IrBuilder) -> Result<(),
             "prototype must be expanded before lowering",
         )),
         StmtKind::Let {
+            is_const,
             exported,
             name,
             type_params,
@@ -298,7 +300,222 @@ pub fn lower_stmt(s: &Stmt, ctx: &mut LowerCtx, b: &mut IrBuilder) -> Result<(),
                 ));
             }
             if is_discard {
-                let _ = lower_expr(expr, ctx, b)?;
+                if !*is_const {
+                    let _ = lower_expr(expr, ctx, b)?;
+                }
+                return Ok(());
+            }
+
+            if *is_const {
+                // Const bindings lower directly from the semantic const initializer plan,
+                // which avoids runtime computation (and preserves Bytes identity on alias).
+                let bind_tid = resolve_opt_ty(ty, ctx)?
+                    .or_else(|| ctx.sem_binding_types.get(&crate::hir::NodeId(s.span)).copied())
+                    .ok_or_else(|| {
+                        CompileError::new(
+                            ErrorKind::Internal,
+                            s.span,
+                            "missing semantic type for const binding",
+                        )
+                    })?;
+
+                let init = ctx.sem_const_inits.get(&NodeId(s.span)).cloned().ok_or_else(|| {
+                    CompileError::new(
+                        ErrorKind::Internal,
+                        s.span,
+                        "missing semantic const initializer (const evaluator did not run?)",
+                    )
+                })?;
+
+                // Local copy of f32->f16 conversion (kept identical to lower/expr/mod.rs).
+                fn f32_to_f16_bits(f: f32) -> u16 {
+                    let u32_bits = f.to_bits();
+                    let sign = (u32_bits >> 16) & 0x8000;
+                    let exp = (u32_bits >> 23) & 0xFF;
+                    let mant = u32_bits & 0x7FFFFF;
+                    if exp == 0xFF {
+                        return (sign | 0x7C00 | if mant != 0 { 0x200 } else { 0 }) as u16;
+                    }
+                    if exp == 0 && mant == 0 {
+                        return sign as u16;
+                    }
+                    let exp16 = (exp as i32) - 127 + 15;
+                    if exp16 >= 31 {
+                        return (sign | 0x7C00) as u16;
+                    }
+                    if exp16 <= 0 {
+                        return sign as u16;
+                    }
+                    (sign | ((exp16 as u32) << 10) | (mant >> 13)) as u16
+                }
+
+                let emit_const_typed = |span: Span,
+                                        tid: TypeId,
+                                        cv: ConstValue,
+                                        ctx: &mut LowerCtx,
+                                        b: &mut IrBuilder|
+                 -> Result<VRegId, CompileError> {
+                    match cv {
+                        ConstValue::Bool(x) => {
+                            let out = b.new_vreg(T_BOOL);
+                            b.emit(span, IrOp::ConstBool { dst: out, imm: x });
+                            if tid != T_BOOL {
+                                let dst = b.new_vreg(tid);
+                                b.emit(span, IrOp::Mov { dst, src: out });
+                                Ok(dst)
+                            } else {
+                                Ok(out)
+                            }
+                        }
+                        ConstValue::Int(x) => match tid {
+                            T_I8 => {
+                                let out = b.new_vreg(T_I8);
+                                let imm = (x as i16).to_le_bytes()[0];
+                                b.emit(span, IrOp::ConstI8Imm { dst: out, imm });
+                                Ok(out)
+                            }
+                            T_I16 | T_I32 => {
+                                let out = b.new_vreg(tid);
+                                b.emit(span, IrOp::ConstI32 { dst: out, imm: x as i32 });
+                                Ok(out)
+                            }
+                            T_I64 => {
+                                let idx = ctx.const_i64.len() as u32;
+                                ctx.const_i64.push(x as i64);
+                                let out = b.new_vreg(T_I64);
+                                b.emit(span, IrOp::ConstI64 { dst: out, pool_index: idx });
+                                Ok(out)
+                            }
+                            T_F16 => {
+                                let out = b.new_vreg(T_F16);
+                                let bits = f32_to_f16_bits(x as f32);
+                                b.emit(span, IrOp::ConstF16 { dst: out, bits });
+                                Ok(out)
+                            }
+                            T_F32 => {
+                                let out = b.new_vreg(T_F32);
+                                let bits = (x as f32).to_bits();
+                                b.emit(span, IrOp::ConstF32 { dst: out, bits });
+                                Ok(out)
+                            }
+                            T_F64 => {
+                                let idx = ctx.const_f64.len() as u32;
+                                ctx.const_f64.push(x as f64);
+                                let out = b.new_vreg(T_F64);
+                                b.emit(span, IrOp::ConstF64 { dst: out, pool_index: idx });
+                                Ok(out)
+                            }
+                            _ => Err(CompileError::new(ErrorKind::Type, span, "const integer initializer type mismatch")),
+                        },
+                        ConstValue::Float(x) => match tid {
+                            T_F16 => {
+                                let out = b.new_vreg(T_F16);
+                                let bits = f32_to_f16_bits(x as f32);
+                                b.emit(span, IrOp::ConstF16 { dst: out, bits });
+                                Ok(out)
+                            }
+                            T_F32 => {
+                                let out = b.new_vreg(T_F32);
+                                let bits = (x as f32).to_bits();
+                                b.emit(span, IrOp::ConstF32 { dst: out, bits });
+                                Ok(out)
+                            }
+                            T_F64 => {
+                                let idx = ctx.const_f64.len() as u32;
+                                ctx.const_f64.push(x);
+                                let out = b.new_vreg(T_F64);
+                                b.emit(span, IrOp::ConstF64 { dst: out, pool_index: idx });
+                                Ok(out)
+                            }
+                            _ => Err(CompileError::new(ErrorKind::Type, span, "const float initializer type mismatch")),
+                        },
+                        ConstValue::Bytes(bytes) => {
+                            let idx = ctx.const_bytes.len() as u32;
+                            ctx.const_bytes.push(bytes);
+                            let out = b.new_vreg(T_BYTES);
+                            b.emit(span, IrOp::ConstBytes { dst: out, pool_index: idx });
+                            if tid != T_BYTES {
+                                let dst = b.new_vreg(tid);
+                                b.emit(span, IrOp::Mov { dst, src: out });
+                                Ok(dst)
+                            } else {
+                                Ok(out)
+                            }
+                        }
+                        ConstValue::Atom(name) => {
+                            let atom_id = intern_atom(name.as_str(), ctx);
+                            let out = b.new_vreg(crate::typectx::T_ATOM);
+                            b.emit(span, IrOp::ConstAtom { dst: out, atom_id });
+                            if tid != crate::typectx::T_ATOM {
+                                let dst = b.new_vreg(tid);
+                                b.emit(span, IrOp::Mov { dst, src: out });
+                                Ok(dst)
+                            } else {
+                                Ok(out)
+                            }
+                        }
+                        ConstValue::Null => {
+                            let v_dyn = b.new_vreg(T_DYNAMIC);
+                            b.emit(span, IrOp::ConstNull { dst: v_dyn });
+                            if tid == T_DYNAMIC {
+                                Ok(v_dyn)
+                            } else {
+                                let dst = b.new_vreg(tid);
+                                b.emit(span, IrOp::Mov { dst, src: v_dyn });
+                                Ok(dst)
+                            }
+                        }
+                    }
+                };
+
+                let v = match init {
+                    ConstInit::Alias(src) => {
+                        let bd = lookup_var(ctx, src.as_str(), s.span)?;
+                        if bd.tid != bind_tid {
+                            let out = b.new_vreg(bind_tid);
+                            b.emit(s.span, IrOp::Mov { dst: out, src: bd.v });
+                            out
+                        } else {
+                            bd.v
+                        }
+                    }
+                    ConstInit::Value(cv) => {
+                        if bind_tid == T_DYNAMIC {
+                            if matches!(cv, ConstValue::Null) {
+                                emit_const_typed(s.span, T_DYNAMIC, cv, ctx, b)?
+                            } else {
+                                let src_tid = ctx
+                                    .sem_expr_types
+                                    .get(&NodeId(expr.span))
+                                    .copied()
+                                    .unwrap_or(T_DYNAMIC);
+                                let src = emit_const_typed(s.span, src_tid, cv, ctx, b)?;
+                                let out = b.new_vreg(T_DYNAMIC);
+                                b.emit(s.span, IrOp::ToDyn { dst: out, src });
+                                out
+                            }
+                        } else {
+                            emit_const_typed(s.span, bind_tid, cv, ctx, b)?
+                        }
+                    }
+                };
+
+                ctx.env_stack
+                    .last_mut()
+                    .expect("env stack")
+                    .insert(name.clone(), super::Binding { v, tid: bind_tid });
+
+                if *exported {
+                    let exports_obj = ctx.exports_obj.ok_or_else(|| {
+                        CompileError::new(
+                            ErrorKind::Name,
+                            s.span,
+                            "export requires module compilation (use --backend ir with imports/exports)",
+                        )
+                    })?;
+                    let atom_id = intern_atom(name, ctx);
+                    b.emit(s.span, IrOp::ObjSetAtom { obj: exports_obj, atom_id, value: v });
+                }
                 return Ok(());
             }
             let expect = resolve_opt_ty(ty, ctx)?
@@ -310,7 +527,7 @@ pub fn lower_stmt(s: &Stmt, ctx: &mut LowerCtx, b: &mut IrBuilder) -> Result<(),
                     .last_mut()
                     .expect("env stack")
                     .insert(name.clone(), super::Binding { v: dst, tid: et });
-                let (v, tid) = lower_expr_expect(expr, Some(et), ctx, b)?;
+                let (v, tid) = lower_expr_expect(expr, ctx, b)?;
                 ctx.pending_fn_self = None;
                 if tid != et {
                     return Err(CompileError::new(ErrorKind::Type, s.span, "let initializer type mismatch"));
@@ -331,26 +548,32 @@ pub fn lower_stmt(s: &Stmt, ctx: &mut LowerCtx, b: &mut IrBuilder) -> Result<(),
                 }
                 Ok(())
             } else {
-                let (v0, tid0) = lower_expr_expect(expr, expect, ctx, b)?;
+                let (v0, tid0) = lower_expr_expect(expr, ctx, b)?;
                 ctx.pending_fn_self = None;
                 let (v, tid) = if let Some(et) = expect {
                     if tid0 != et {
-                        match coerce_numeric(s.span, v0, tid0, et, b) {
-                            Ok(coerced) => {
-                                if is_narrowing_numeric(tid0, et) {
-                                    ctx.warnings.push(crate::error::CompileWarning::new(
-                                        s.span,
-                                        format!(
-                                            "implicit narrowing conversion in let initializer from {} to {}",
-                                            super::expr::type_name(tid0),
-                                            super::expr::type_name(et)
-                                        ),
-                                    ));
+                        if et == T_DYNAMIC {
+                            let out = b.new_vreg(T_DYNAMIC);
+                            b.emit(s.span, IrOp::ToDyn { dst: out, src: v0 });
+                            (out, T_DYNAMIC)
+                        } else {
+                            match coerce_numeric(s.span, v0, tid0, et, b) {
+                                Ok(coerced) => {
+                                    if is_narrowing_numeric(tid0, et) {
+                                        ctx.warnings.push(crate::error::CompileWarning::new(
+                                            s.span,
+                                            format!(
+                                                "implicit narrowing conversion in let initializer from {} to {}",
+                                                super::expr::type_name(tid0),
+                                                super::expr::type_name(et)
+                                            ),
+                                        ));
+                                    }
+                                    (coerced, et)
                                 }
-                                (coerced, et)
-                            }
-                            Err(_) => {
-                                return Err(CompileError::new(ErrorKind::Type, s.span, "let initializer type mismatch"));
+                                Err(_) => {
+                                    return Err(CompileError::new(ErrorKind::Type, s.span, "let initializer type mismatch"));
+                                }
                             }
                         }
                     } else {
@@ -405,24 +628,30 @@ pub fn lower_stmt(s: &Stmt, ctx: &mut LowerCtx, b: &mut IrBuilder) -> Result<(),
             })?;
             let (rhs, rt) = lower_expr(expr, ctx, b)?;
             let rhs = if rt != dst.tid {
-                let coerced = coerce_numeric(s.span, rhs, rt, dst.tid, b).map_err(|_| {
-                    CompileError::new(
-                        ErrorKind::Type,
-                        s.span,
-                        format!("assignment to '{}' changes type", name),
-                    )
-                })?;
-                if is_narrowing_numeric(rt, dst.tid) {
-                    ctx.warnings.push(crate::error::CompileWarning::new(
-                        s.span,
-                        format!(
-                            "implicit narrowing conversion in assignment from {} to {}",
-                            super::expr::type_name(rt),
-                            super::expr::type_name(dst.tid)
-                        ),
-                    ));
+                if dst.tid == T_DYNAMIC {
+                    let out = b.new_vreg(T_DYNAMIC);
+                    b.emit(s.span, IrOp::ToDyn { dst: out, src: rhs });
+                    out
+                } else {
+                    let coerced = coerce_numeric(s.span, rhs, rt, dst.tid, b).map_err(|_| {
+                        CompileError::new(
+                            ErrorKind::Type,
+                            s.span,
+                            format!("assignment to '{}' changes type", name),
+                        )
+                    })?;
+                    if is_narrowing_numeric(rt, dst.tid) {
+                        ctx.warnings.push(crate::error::CompileWarning::new(
+                            s.span,
+                            format!(
+                                "implicit narrowing conversion in assignment from {} to {}",
+                                super::expr::type_name(rt),
+                                super::expr::type_name(dst.tid)
+                            ),
+                        ));
+                    }
+                    coerced
                 }
-                coerced
             } else {
                 rhs
             };
@@ -459,7 +688,7 @@ pub fn lower_stmt(s: &Stmt, ctx: &mut LowerCtx, b: &mut IrBuilder) -> Result<(),
             let v_idx = match t_idx_raw {
                 T_I32 => v_idx_raw,
                 T_I8 | T_I16 | T_I64 => coerce_numeric(index.span, v_idx_raw, t_idx_raw, T_I32, b)?,
-                T_DYNAMIC => lower_expr_expect(index, Some(T_I32), ctx, b)?.0,
+                T_DYNAMIC => lower_expr_expect(index, ctx, b)?.0,
                 _ => {
                     return Err(CompileError::new(
                         ErrorKind::Type,
@@ -538,7 +767,7 @@ pub fn lower_stmt(s: &Stmt, ctx: &mut LowerCtx, b: &mut IrBuilder) -> Result<(),
                             }
                             coerced
                         }
-                        T_DYNAMIC => lower_expr_expect(expr, Some(T_I32), ctx, b)?.0,
+                        T_DYNAMIC => lower_expr_expect(expr, ctx, b)?.0,
                         _ => {
                             return Err(CompileError::new(
                                 ErrorKind::Type,
@@ -562,6 +791,7 @@ pub fn lower_stmt(s: &Stmt, ctx: &mut LowerCtx, b: &mut IrBuilder) -> Result<(),
             let from = b.cur_block();
             let cond_b = b.new_block(Some("while_cond".to_string()));
             let body_b = b.new_block(Some("while_body".to_string()));
+            let latch_b = b.new_block(Some("while_latch".to_string()));
             let exit_b = b.new_block(Some("while_exit".to_string()));
 
             b.set_block(from);
@@ -570,7 +800,7 @@ pub fn lower_stmt(s: &Stmt, ctx: &mut LowerCtx, b: &mut IrBuilder) -> Result<(),
             b.set_block(body_b);
             ctx.loop_stack.push(LoopTargets {
                 break_tgt: exit_b,
-                continue_tgt: cond_b,
+                continue_tgt: latch_b,
             });
             ctx.env_stack.push(HashMap::new());
             for st in body {
@@ -582,6 +812,9 @@ pub fn lower_stmt(s: &Stmt, ctx: &mut LowerCtx, b: &mut IrBuilder) -> Result<(),
             ensure_open_block(b);
             let tail = b.cur_block();
             b.set_block(tail);
+            b.term(IrTerminator::Jmp { target: latch_b });
+
+            b.set_block(latch_b);
             b.term(IrTerminator::Jmp { target: cond_b });
 
             let assigned = vars_assigned_in(body);
@@ -601,7 +834,7 @@ pub fn lower_stmt(s: &Stmt, ctx: &mut LowerCtx, b: &mut IrBuilder) -> Result<(),
                     Span::point(0),
                     IrOp::Phi {
                         dst: phi_dst,
-                        incomings: vec![(from, bd.v), (tail, bd.v)],
+                        incomings: vec![(from, bd.v), (latch_b, bd.v)],
                     },
                 );
                 cond_env.insert(name.clone(), super::Binding { v: phi_dst, tid: bd.tid });
@@ -610,9 +843,11 @@ pub fn lower_stmt(s: &Stmt, ctx: &mut LowerCtx, b: &mut IrBuilder) -> Result<(),
 
             let (v_cond, t_cond) = lower_expr(cond, ctx, b)?;
             ctx.env_stack.pop();
-            if t_cond != T_BOOL {
-                return Err(CompileError::new(ErrorKind::Type, cond.span, "while condition must be bool"));
-            }
+            let v_cond = if t_cond == T_BOOL {
+                v_cond
+            } else {
+                lower_truthy(cond.span, v_cond, t_cond, ctx, b)?
+            };
             b.term(IrTerminator::JmpIf {
                 cond: v_cond,
                 then_tgt: body_b,
@@ -708,10 +943,16 @@ pub fn lower_stmt(s: &Stmt, ctx: &mut LowerCtx, b: &mut IrBuilder) -> Result<(),
                 let mut tmps: Vec<VRegId> = Vec::with_capacity(args.len());
                 for (i, a) in args.iter().enumerate() {
                     let want = sig_args[i];
-                    let (va, ta) = lower_expr_expect(a, Some(want), ctx, b)?;
-                    if ta != want {
+                    let (va, ta) = lower_expr_expect(a, ctx, b)?;
+                    let va = if want == T_DYNAMIC && ta != T_DYNAMIC {
+                        let out = b.new_vreg(T_DYNAMIC);
+                        b.emit(a.span, IrOp::ToDyn { dst: out, src: va });
+                        out
+                    } else if ta != want {
                         return Err(CompileError::new(ErrorKind::Type, a.span, "tail call argument type mismatch"));
-                    }
+                    } else {
+                        va
+                    };
                     let tmp = b.new_vreg(want);
                     b.emit(a.span, IrOp::Mov { dst: tmp, src: va });
                     tmps.push(tmp);
@@ -767,10 +1008,17 @@ pub fn lower_stmt(s: &Stmt, ctx: &mut LowerCtx, b: &mut IrBuilder) -> Result<(),
                     }
                 }
 
-                let (v, tid) = lower_expr_expect(e, Some(ret_tid), ctx, b)?;
-                if tid != ret_tid {
-                    return Err(CompileError::new(ErrorKind::Type, e.span, "return type mismatch"));
-                }
+                let (v, tid) = lower_expr_expect(e, ctx, b)?;
+                let v = if ret_tid == T_DYNAMIC && tid != T_DYNAMIC {
+                    let out = b.new_vreg(T_DYNAMIC);
+                    b.emit(e.span, IrOp::ToDyn { dst: out, src: v });
+                    out
+                } else {
+                    if tid != ret_tid {
+                        return Err(CompileError::new(ErrorKind::Type, e.span, "return type mismatch"));
+                    }
+                    v
+                };
                 b.term(IrTerminator::Ret { value: v });
                 Ok(())
             }
@@ -797,10 +1045,5 @@ pub fn lower_stmt(s: &Stmt, ctx: &mut LowerCtx, b: &mut IrBuilder) -> Result<(),
             let _ = lower_expr(expr, ctx, b)?;
             Ok(())
         }
-        _ => Err(CompileError::new(
-            ErrorKind::Codegen,
-            s.span,
-            "IR lowering: statement not implemented yet",
-        )),
     }
 }

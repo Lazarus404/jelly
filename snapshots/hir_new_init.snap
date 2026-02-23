@@ -1,0 +1,46 @@
+hir {
+  let init: Fun { args: [Spanned { node: Named("Object"), span: Span { start: 11, end: 17 } }, Spanned { node: Named("I32"), span: Span { start: 19, end: 22 } }], ret: Spanned { node: Named("Object"), span: Span { start: 27, end: 33 } } } @0..123 : (Object, I32) -> Object
+    Fn(params=2) : (Object, I32) -> Object @36..122
+      let k @50..75 : Atom
+        Call : Atom @58..74
+          Member(.intern) : (Bytes) -> Atom @58..69
+            Var(Atom) : ? @58..62
+          BytesLit : Bytes @70..73
+      let _ @76..107
+        Call : Object @84..106
+          Member(.set) : (Object, Atom, Dynamic) -> Object @84..94
+            Var(Object) : ? @84..90
+          Var(self) : Object @95..99
+          Var(k) : Atom @101..102
+          Var(x) : I32 @104..105
+      return @108..120
+        Var(self) : Object @115..119
+  let proto @124..151 : Object
+    ObjLit(1) : Object @136..150
+      field init:
+        Var(init) : (Object, I32) -> Object @144..148
+  let inst @152..176 : Object
+    New(args=1) : Object @163..175
+      Var(proto) : Object @167..172
+      I32Lit(7) : I32 @173..174
+  let k @177..202 : Atom
+    Call : Atom @185..201
+      Member(.intern) : (Bytes) -> Atom @185..196
+        Var(Atom) : ? @185..189
+      BytesLit : Bytes @197..200
+  let v: Named("I32") @203..241 : I32
+    Call<1> : I32 @216..240
+      Member(.get) : (Object, Atom) -> I32 @216..226
+        Var(Object) : ? @216..222
+      Var(inst) : Object @232..236
+      Var(k) : Atom @238..239
+  stmt_expr @242..264
+    Call : Bool @242..263
+      Member(.assert) : (Bool) -> Bool @242..255
+        Var(System) : ? @242..248
+      Eq : Bool @256..262
+        Var(v) : I32 @256..257
+        I32Lit(7) : I32 @261..262
+  expr:
+    BytesLit : Bytes @265..269
+}

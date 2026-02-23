@@ -30,6 +30,7 @@
 // Literal expression lowering (array, tuple).
 
 use crate::error::{CompileError, ErrorKind};
+use crate::hir::NodeId;
 use crate::ir::{IrBuilder, IrOp, TypeId, VRegId};
 
 use super::{intern_atom, lower_expr, LowerCtx};
@@ -38,23 +39,20 @@ use super::{T_ARRAY_BYTES, T_ARRAY_I32, T_I32, T_BYTES};
 pub fn lower_array_lit(
     e: &crate::ast::Expr,
     elems: &[crate::ast::Expr],
-    expect: Option<TypeId>,
     ctx: &mut LowerCtx,
     b: &mut IrBuilder,
 ) -> Result<(VRegId, TypeId), CompileError> {
     if elems.is_empty() {
-        let et = expect.ok_or_else(|| {
-            CompileError::new(
-                ErrorKind::Type,
-                e.span,
-                "empty array literal requires a type annotation",
-            )
-        })?;
+        let et = ctx
+            .sem_expr_types
+            .get(&NodeId(e.span))
+            .copied()
+            .ok_or_else(|| CompileError::new(ErrorKind::Internal, e.span, "missing semantic type for array literal"))?;
         if et != T_ARRAY_I32 && et != T_ARRAY_BYTES {
             return Err(CompileError::new(
-                ErrorKind::Type,
+                ErrorKind::Internal,
                 e.span,
-                "empty array literal requires Array<i32> or Array<bytes>",
+                "array literal has non-array semantic type",
             ));
         }
         let v0 = b.new_vreg(T_I32);

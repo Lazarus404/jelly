@@ -1,0 +1,6 @@
+try {
+    System.assert(false);
+    "bad"
+} catch {
+    "ok"
+}

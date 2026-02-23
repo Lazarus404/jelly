@@ -32,37 +32,26 @@
 use std::collections::HashMap;
 
 use crate::error::{CompileError, ErrorKind};
+use crate::hir::NodeId;
 use crate::ir::{BlockId, IrBuilder, IrOp, IrTerminator, TypeId, VRegId};
 
 use crate::lower::{lower_stmt, Binding, FnCtx, LowerCtx};
 
 use super::lower_expr;
-use super::fn_infer;
 
 pub fn lower_fn_expr(
     e: &crate::ast::Expr,
     params: &[(String, Option<crate::ast::Ty>)],
     body: &[crate::ast::Stmt],
     tail: &Option<Box<crate::ast::Expr>>,
-    expect: Option<TypeId>,
     ctx: &mut LowerCtx,
     b: &mut IrBuilder,
 ) -> Result<(VRegId, TypeId), CompileError> {
-    let expect_tid = if let Some(t) = expect {
-        t
-    } else if let Some((self_name, _)) = ctx.pending_fn_self.clone() {
-        // If we're lowering `let f = fn(...) { ... }` without an explicit annotation,
-        // `lower_stmt` should have set `pending_fn_self` so we can infer a signature here.
-        let (fun_tid, _args, _ret) =
-            fn_infer::infer_fn_type_for_let(self_name.as_str(), params, body, tail, ctx)?;
-        fun_tid
-    } else {
-        return Err(CompileError::new(
-            ErrorKind::Type,
-            e.span,
-            "function literal requires a type annotation.\nhelp: annotate the let binding, e.g. `let f: (I32, I32) -> I32 = fn(x, y) { ... };`",
-        ));
-    };
+    let expect_tid = ctx
+        .sem_expr_types
+        .get(&NodeId(e.span))
+        .copied()
+        .ok_or_else(|| CompileError::new(ErrorKind::Internal, e.span, "missing semantic type for function literal"))?;
 
     let te = ctx
         .type_ctx
@@ -93,8 +82,12 @@ pub fn lower_fn_expr(
     }
 
     // Logical index: 0=native, 1..4=prelude, 5=main, 6+=nested. Add 1 for native slot.
+    //
+    // IMPORTANT: use a monotonic counter; `nested_funcs.len()` is not safe because we can lower
+    // a nested lambda while its parent lambda is still being built (and thus not yet pushed).
     let func_index =
-        crate::jlyb::PRELUDE_FUN_COUNT + 1 + ctx.user_top_level_fun_count + (ctx.nested_funcs.len() as u32);
+        crate::jlyb::PRELUDE_FUN_COUNT + 1 + ctx.user_top_level_fun_count + ctx.next_nested_fun_index;
+    ctx.next_nested_fun_index += 1;
     let mut fb = IrBuilder::new(Some(format!("lambda{}", func_index)));
     fb.func.param_count = params.len() as u8;
 
@@ -127,19 +120,24 @@ pub fn lower_fn_expr(
     // Recursion sugar for `let f: T = fn(...) { ... f(...) ... }`:
     // inside the function body, bind `f` to a `CONST_FUN` of the function itself.
     if let Some((self_name, self_tid)) = ctx.pending_fn_self.clone() {
-        if self_tid == expect_tid {
-            let env = ctx.env_stack.last_mut().expect("env stack");
-            if !env.contains_key(&self_name) {
-                let vself = fb.new_vreg(expect_tid);
-                fb.emit(e.span, IrOp::ConstFun {
-                    dst: vself,
-                    func_index,
-                });
-                env.insert(self_name, Binding {
-                    v: vself,
-                    tid: expect_tid,
-                });
-            }
+        if self_tid != expect_tid {
+            return Err(CompileError::new(
+                ErrorKind::Internal,
+                e.span,
+                "semantic type mismatch for self-recursive fn literal",
+            ));
+        }
+        let env = ctx.env_stack.last_mut().expect("env stack");
+        if !env.contains_key(&self_name) {
+            let vself = fb.new_vreg(expect_tid);
+            fb.emit(e.span, IrOp::ConstFun {
+                dst: vself,
+                func_index,
+            });
+            env.insert(self_name, Binding {
+                v: vself,
+                tid: expect_tid,
+            });
         }
     }
 

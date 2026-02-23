@@ -1,0 +1,5 @@
+let a = true;
+let b = false;
+let r = if (a && (!b || b == false)) { "ok" } else { "bad" }
+System.assert(r == "ok");
+r

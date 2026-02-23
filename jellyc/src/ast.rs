@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 /**
  * Copyright 2022 - Jahred Love
  *
@@ -188,6 +190,7 @@ pub type Stmt = Spanned<StmtKind>;
 #[derive(Clone, Debug)]
 pub enum StmtKind {
     Let {
+        is_const: bool,
         exported: bool,
         name: String,
         /// Compile-time template parameters: `let Name<T, U> = ...;`

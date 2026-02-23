@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 /**
  * Copyright 2022 - Jahred Love
  *
@@ -145,7 +147,7 @@ pub fn build_prelude_module() -> Module {
     let types = type_ctx.types.clone();
     let sigs = type_ctx.sigs.clone();
 
-    let mut const_f64 = vec![0.5];
+    let const_f64 = vec![0.5];
     let mut funcs = prelude_funcs_for_program();
 
     // fun2: __prelude_smoke() -> bytes  (entry)

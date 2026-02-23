@@ -1,0 +1,40 @@
+ir {
+  funcs: 1
+  entry: 0
+  fn[0] main params=0 entry=b0
+    vregs:
+      v0: Object
+      v1: I32
+      v2: Bytes
+      v3: Tuple<I32, Bytes>
+      v4: I32
+      v5: I32
+      v6: Bytes
+      v7: Bytes
+      v8: I32
+      v9: Bool
+      v10: I32
+      v11: I32
+      v12: Bool
+      v13: Bytes
+    b0 (entry):
+      @0..0 ObjNew { dst: v0 }
+      @9..10 ConstI32 { dst: v1, imm: 1 }
+      @12..16 ConstBytes { dst: v2, len: 2 }
+      @8..17 ObjNew { dst: v3 }
+      @8..17 ObjSetAtom { obj: v3, atom: "0", value: v1 }
+      @8..17 ObjSetAtom { obj: v3, atom: "1", value: v2 }
+      @32..35 ObjGetAtom { dst: v4, obj: v3, atom: "0" }
+      @19..36 Mov { dst: v5, src: v4 }
+      @52..55 ObjGetAtom { dst: v6, obj: v3, atom: "1" }
+      @37..56 Mov { dst: v7, src: v6 }
+      @76..77 ConstI32 { dst: v8, imm: 1 }
+      @71..77 EqI32 { dst: v9, a: v5, b: v8 }
+      @57..78 Assert { cond: v9 }
+      @94..106 BytesLen { dst: v10, bytes: v7 }
+      @110..111 ConstI32 { dst: v11, imm: 2 }
+      @94..111 EqI32 { dst: v12, a: v10, b: v11 }
+      @80..112 Assert { cond: v12 }
+      @114..118 ConstBytes { dst: v13, len: 2 }
+      term: Ret { value: v13 }
+}

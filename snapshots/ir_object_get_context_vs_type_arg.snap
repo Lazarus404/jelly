@@ -1,0 +1,26 @@
+ir {
+  funcs: 1
+  entry: 0
+  fn[0] main params=0 entry=b0
+    vregs:
+      v0: Object
+      v1: Object
+      v2: Atom
+      v3: I32
+      v4: I32
+      v5: I32
+      v6: Bool
+      v7: Bytes
+    b0 (entry):
+      @0..0 ObjNew { dst: v0 }
+      @8..11 ObjNew { dst: v1 }
+      @21..37 ConstAtom { dst: v2, atom: "a" }
+      @64..67 ConstI32 { dst: v3, imm: 123 }
+      @47..68 ObjSet { obj: v1, atom: v2, value: v3 }
+      @83..99 ObjGet { dst: v4, obj: v1, atom: v2 }
+      @109..130 ObjGet { dst: v5, obj: v1, atom: v2 }
+      @146..152 EqI32 { dst: v6, a: v4, b: v5 }
+      @132..153 Assert { cond: v6 }
+      @155..159 ConstBytes { dst: v7, len: 2 }
+      term: Ret { value: v7 }
+}

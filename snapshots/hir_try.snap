@@ -1,0 +1,12 @@
+hir {
+  expr:
+    Try(catch=e) : Bytes @0..47
+      Block : Bytes @4..26
+        throw @6..19
+          BytesLit : Bytes @12..18
+        BytesLit : Bytes @20..24
+      Block : Bytes @36..47
+        stmt_expr @38..40
+          Var(e) : Dynamic @38..39
+        BytesLit : Bytes @41..45
+}

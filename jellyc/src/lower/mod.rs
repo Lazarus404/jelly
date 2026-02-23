@@ -27,13 +27,13 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
- mod expr;
+mod expr;
 mod stmt;
 
 use std::collections::HashMap;
 
 use crate::ast::{Program, Span, StmtKind, Ty};
-use crate::hir::{NodeId, SemanticInfo};
+use crate::hir::{ConstInit, NodeId, SemanticInfo};
 
 pub(crate) use expr::lower_expr;
 pub(crate) use stmt::lower_stmt;
@@ -82,12 +82,20 @@ pub(crate) struct LowerCtx {
     pub loop_stack: Vec<LoopTargets>,
     pub fn_stack: Vec<FnCtx>,
     pub nested_funcs: Vec<crate::ir::IrFunction>,
+    /// Monotonic allocator for nested (lambda) function indices.
+    ///
+    /// This must be independent of `nested_funcs.len()` because we can lower nested lambdas
+    /// while their parent lambda is still being built (and thus not yet pushed into
+    /// `nested_funcs`), which would otherwise cause duplicate function indices.
+    pub next_nested_fun_index: u32,
     pub pending_fn_self: Option<(String, TypeId)>,
     pub user_top_level_fun_count: u32,
     pub exports_obj: Option<VRegId>,
     pub module_alias_exports: HashMap<String, HashMap<String, TypeId>>,
     pub module_key_to_alias: HashMap<String, String>,
     pub sem_binding_types: HashMap<NodeId, TypeId>,
+    pub sem_expr_types: HashMap<NodeId, TypeId>,
+    pub sem_const_inits: HashMap<NodeId, ConstInit>,
     pub warnings: Vec<CompileWarning>,
 }
 
@@ -181,12 +189,15 @@ pub fn lower_program_to_ir(p: &Program, sem: &SemanticInfo) -> Result<IrModule, 
         loop_stack: Vec::new(),
         fn_stack: Vec::new(),
         nested_funcs: Vec::new(),
+        next_nested_fun_index: 0,
         pending_fn_self: None,
         user_top_level_fun_count: 1,
         exports_obj: None,
         module_alias_exports: HashMap::new(),
         module_key_to_alias: HashMap::new(),
         sem_binding_types: sem.binding_types.clone(),
+        sem_expr_types: sem.expr_types.clone(),
+        sem_const_inits: sem.const_inits.clone(),
         warnings: Vec::new(),
     };
 
@@ -314,12 +325,15 @@ pub fn lower_module_init_to_ir(
         loop_stack: Vec::new(),
         fn_stack: Vec::new(),
         nested_funcs: Vec::new(),
+        next_nested_fun_index: 0,
         pending_fn_self: None,
         user_top_level_fun_count: 1,
         exports_obj: Some(VRegId(0)),
         module_alias_exports,
         module_key_to_alias: key_to_alias,
         sem_binding_types: sem.binding_types.clone(),
+        sem_expr_types: sem.expr_types.clone(),
+        sem_const_inits: sem.const_inits.clone(),
         warnings: Vec::new(),
     };
 
@@ -429,40 +443,16 @@ pub(crate) fn ensure_capture_binding(
         return Ok(Some(bd));
     }
 
-    let slot = b.new_vreg(if ctx.type_ctx.types.get(ob.tid as usize).map_or(false, |te| te.kind == crate::jlyb::TypeKind::Function) {
-        ob.tid
-    } else {
-        T_DYNAMIC
-    });
+    // Captures are stored in dedicated capture-slot vregs in the callee frame. Prefer storing
+    // them in their *typed* representation so the VM can unbox/coerce from the captured boxed
+    // value when initializing the frame (via `vm_store_from_boxed`).
+    //
+    // This avoids relying on `FromDyn*` inside the callee for captured locals.
+    let slot = b.new_vreg(ob.tid);
     fc.captures.insert(name.to_string(), (ob, slot));
     fc.capture_order.push(name.to_string());
-
-    let out = b.new_vreg(ob.tid);
-    match ob.tid {
-        T_I8 => b.emit(span, crate::ir::IrOp::FromDynI8 { dst: out, src: slot }),
-        T_I16 => b.emit(span, crate::ir::IrOp::FromDynI16 { dst: out, src: slot }),
-        T_I32 => b.emit(span, crate::ir::IrOp::FromDynI32 { dst: out, src: slot }),
-        T_I64 => b.emit(span, crate::ir::IrOp::FromDynI64 { dst: out, src: slot }),
-        T_F16 => b.emit(span, crate::ir::IrOp::FromDynF16 { dst: out, src: slot }),
-        T_F32 => b.emit(span, crate::ir::IrOp::FromDynF32 { dst: out, src: slot }),
-        T_F64 => b.emit(span, crate::ir::IrOp::FromDynF64 { dst: out, src: slot }),
-        T_BOOL => b.emit(span, crate::ir::IrOp::FromDynBool { dst: out, src: slot }),
-        T_BYTES | T_OBJECT | T_ARRAY_I32 | T_ARRAY_BYTES => b.emit(span, crate::ir::IrOp::FromDynPtr { dst: out, src: slot }),
-        T_DYNAMIC => b.emit(span, crate::ir::IrOp::Mov { dst: out, src: slot }),
-        _ if ctx.type_ctx.types.get(ob.tid as usize).map_or(false, |te| te.kind == crate::jlyb::TypeKind::Function) => {
-            bind_local(ctx, name, slot, ob.tid);
-            return Ok(Some(Binding { v: slot, tid: ob.tid }));
-        }
-        _ => {
-            return Err(CompileError::new(
-                ErrorKind::Type,
-                span,
-                "unsupported capture type",
-            ))
-        }
-    }
-    bind_local(ctx, name, out, ob.tid);
-    Ok(Some(Binding { v: out, tid: ob.tid }))
+    bind_local(ctx, name, slot, ob.tid);
+    Ok(Some(Binding { v: slot, tid: ob.tid }))
 }
 
 pub(crate) fn bind_local(ctx: &mut LowerCtx, name: &str, v: VRegId, tid: TypeId) {
@@ -486,14 +476,19 @@ mod tests {
 
     #[test]
     fn lower_module_named_imports_binds_locals() {
-        let sp = Span::new(0, 1);
+        let mut i: usize = 0;
+        let mut sp = || {
+            let s = Span::new(i, i + 1);
+            i += 1;
+            s
+        };
         let import_add = Spanned::new(
             StmtKind::ImportFrom {
                 type_only: false,
                 items: vec![("add".to_string(), None)],
                 from: vec!["math".to_string()],
             },
-            sp,
+            sp(),
         );
         let import_y = Spanned::new(
             StmtKind::ImportFrom {
@@ -501,32 +496,33 @@ mod tests {
                 items: vec![("x".to_string(), Some("y".to_string()))],
                 from: vec!["consts".to_string()],
             },
-            sp,
+            sp(),
         );
         let call_add = Spanned::new(
             ExprKind::Call {
-                callee: Box::new(Spanned::new(ExprKind::Var("add".to_string()), sp)),
+                callee: Box::new(Spanned::new(ExprKind::Var("add".to_string()), sp())),
                 type_args: vec![],
                 args: vec![
-                    Spanned::new(ExprKind::Var("y".to_string()), sp),
-                    Spanned::new(ExprKind::I32Lit(3), sp),
+                    Spanned::new(ExprKind::Var("y".to_string()), sp()),
+                    Spanned::new(ExprKind::I32Lit(3), sp()),
                 ],
             },
-            sp,
+            sp(),
         );
         let let_r = Spanned::new(
             StmtKind::Let {
+                is_const: false,
                 exported: false,
                 name: "r".to_string(),
                 type_params: Vec::new(),
-                ty: Some(Spanned::new(TyKind::Named("I32".to_string()), sp)),
+                ty: Some(Spanned::new(TyKind::Named("I32".to_string()), sp())),
                 expr: call_add,
             },
-            sp,
+            sp(),
         );
         let prog = Program {
             stmts: vec![import_add, import_y, let_r],
-            expr: Spanned::new(ExprKind::BytesLit(b"ok".to_vec()), sp),
+            expr: Spanned::new(ExprKind::BytesLit(b"ok".to_vec()), sp()),
         };
 
         let mut import_exports: HashMap<String, HashMap<String, TypeRepr>> = HashMap::new();
@@ -565,16 +561,19 @@ mod tests {
 
     #[test]
     fn lower_if_expression_builds_blocks_and_join() {
-        let src_span = Span::new(0, 1);
+        let if_sp = Span::new(0, 1);
+        let cond_sp = Span::new(2, 3);
+        let then_sp = Span::new(4, 5);
+        let else_sp = Span::new(6, 7);
         let prog = Program {
             stmts: vec![],
             expr: Spanned::new(
                 ExprKind::If {
-                    cond: Box::new(Spanned::new(ExprKind::BoolLit(true), src_span)),
-                    then_br: Box::new(Spanned::new(ExprKind::BytesLit(b"a".to_vec()), src_span)),
-                    else_br: Box::new(Spanned::new(ExprKind::BytesLit(b"b".to_vec()), src_span)),
+                    cond: Box::new(Spanned::new(ExprKind::BoolLit(true), cond_sp)),
+                    then_br: Box::new(Spanned::new(ExprKind::BytesLit(b"a".to_vec()), then_sp)),
+                    else_br: Box::new(Spanned::new(ExprKind::BytesLit(b"b".to_vec()), else_sp)),
                 },
-                src_span,
+                if_sp,
             ),
         };
         let (hir, info) = crate::semantic::analyze_program(&prog).unwrap();
@@ -642,46 +641,52 @@ mod tests {
 
     #[test]
     fn lower_self_recursive_fn_literal() {
-        let sp = Span::new(0, 1);
-        let ty_i32 = Spanned::new(TyKind::Named("I32".to_string()), sp);
+        let mut i: usize = 0;
+        let mut sp = || {
+            let s = Span::new(i, i + 1);
+            i += 1;
+            s
+        };
+        let ty_i32 = Spanned::new(TyKind::Named("I32".to_string()), sp());
         let ty_fun = Spanned::new(
             TyKind::Fun {
                 args: vec![ty_i32.clone()],
                 ret: Box::new(ty_i32.clone()),
             },
-            sp,
+            sp(),
         );
 
         let call_fib = Spanned::new(
             ExprKind::Call {
-                callee: Box::new(Spanned::new(ExprKind::Var("fib".to_string()), sp)),
+                callee: Box::new(Spanned::new(ExprKind::Var("fib".to_string()), sp())),
                 type_args: vec![],
-                args: vec![Spanned::new(ExprKind::Var("n".to_string()), sp)],
+                args: vec![Spanned::new(ExprKind::Var("n".to_string()), sp())],
             },
-            sp,
+            sp(),
         );
         let fn_lit = Spanned::new(
             ExprKind::Fn {
                 params: vec![("n".to_string(), None)],
-                body: vec![Spanned::new(StmtKind::Return { expr: Some(call_fib) }, sp)],
+                body: vec![Spanned::new(StmtKind::Return { expr: Some(call_fib) }, sp())],
                 tail: None,
             },
-            sp,
+            sp(),
         );
         let st_let = Spanned::new(
             StmtKind::Let {
+                is_const: false,
                 exported: false,
                 name: "fib".to_string(),
                 type_params: Vec::new(),
                 ty: Some(ty_fun),
                 expr: fn_lit,
             },
-            sp,
+            sp(),
         );
 
         let prog = Program {
             stmts: vec![st_let],
-            expr: Spanned::new(ExprKind::BytesLit(b"ok".to_vec()), sp),
+            expr: Spanned::new(ExprKind::BytesLit(b"ok".to_vec()), sp()),
         };
         let (hir, info) = crate::semantic::analyze_program(&prog).unwrap();
         lower_program_to_ir(&hir.program, &info).unwrap();
@@ -689,81 +694,87 @@ mod tests {
 
     #[test]
     fn lower_self_recursive_fn_literal_through_if() {
-        let sp = Span::new(0, 1);
-        let ty_i32 = Spanned::new(TyKind::Named("I32".to_string()), sp);
+        let mut i: usize = 0;
+        let mut sp = || {
+            let s = Span::new(i, i + 1);
+            i += 1;
+            s
+        };
+        let ty_i32 = Spanned::new(TyKind::Named("I32".to_string()), sp());
         let ty_fun = Spanned::new(
             TyKind::Fun {
                 args: vec![ty_i32.clone()],
                 ret: Box::new(ty_i32.clone()),
             },
-            sp,
+            sp(),
         );
 
         let call_fib_1 = Spanned::new(
             ExprKind::Call {
-                callee: Box::new(Spanned::new(ExprKind::Var("fib".to_string()), sp)),
+                callee: Box::new(Spanned::new(ExprKind::Var("fib".to_string()), sp())),
                 type_args: vec![],
                 args: vec![Spanned::new(
                     ExprKind::Sub(
-                        Box::new(Spanned::new(ExprKind::Var("n".to_string()), sp)),
-                        Box::new(Spanned::new(ExprKind::I32Lit(1), sp)),
+                        Box::new(Spanned::new(ExprKind::Var("n".to_string()), sp())),
+                        Box::new(Spanned::new(ExprKind::I32Lit(1), sp())),
                     ),
-                    sp,
+                    sp(),
                 )],
             },
-            sp,
+            sp(),
         );
         let call_fib_2 = Spanned::new(
             ExprKind::Call {
-                callee: Box::new(Spanned::new(ExprKind::Var("fib".to_string()), sp)),
+                callee: Box::new(Spanned::new(ExprKind::Var("fib".to_string()), sp())),
                 type_args: vec![],
                 args: vec![Spanned::new(
                     ExprKind::Sub(
-                        Box::new(Spanned::new(ExprKind::Var("n".to_string()), sp)),
-                        Box::new(Spanned::new(ExprKind::I32Lit(2), sp)),
+                        Box::new(Spanned::new(ExprKind::Var("n".to_string()), sp())),
+                        Box::new(Spanned::new(ExprKind::I32Lit(2), sp())),
                     ),
-                    sp,
+                    sp(),
                 )],
             },
-            sp,
+            sp(),
         );
-        let else_expr = Spanned::new(ExprKind::Add(Box::new(call_fib_1), Box::new(call_fib_2)), sp);
+        let else_expr = Spanned::new(ExprKind::Add(Box::new(call_fib_1), Box::new(call_fib_2)), sp());
         let if_expr = Spanned::new(
             ExprKind::If {
                 cond: Box::new(Spanned::new(
                     ExprKind::Lt(
-                        Box::new(Spanned::new(ExprKind::Var("n".to_string()), sp)),
-                        Box::new(Spanned::new(ExprKind::I32Lit(2), sp)),
+                        Box::new(Spanned::new(ExprKind::Var("n".to_string()), sp())),
+                        Box::new(Spanned::new(ExprKind::I32Lit(2), sp())),
                     ),
-                    sp,
+                    sp(),
                 )),
-                then_br: Box::new(Spanned::new(ExprKind::Var("n".to_string()), sp)),
+                then_br: Box::new(Spanned::new(ExprKind::Var("n".to_string()), sp())),
                 else_br: Box::new(else_expr),
             },
-            sp,
+            sp(),
         );
         let fn_lit = Spanned::new(
             ExprKind::Fn {
                 params: vec![("n".to_string(), None)],
-                body: vec![Spanned::new(StmtKind::Return { expr: Some(if_expr) }, sp)],
+                body: vec![Spanned::new(StmtKind::Return { expr: Some(if_expr) }, sp())],
                 tail: None,
             },
-            sp,
+            sp(),
         );
         let st_let = Spanned::new(
             StmtKind::Let {
+                is_const: false,
                 exported: false,
                 name: "fib".to_string(),
                 type_params: Vec::new(),
                 ty: Some(ty_fun),
                 expr: fn_lit,
             },
-            sp,
+            sp(),
         );
 
         let prog = Program {
             stmts: vec![st_let],
-            expr: Spanned::new(ExprKind::BytesLit(b"ok".to_vec()), sp),
+            expr: Spanned::new(ExprKind::BytesLit(b"ok".to_vec()), sp()),
         };
         let (hir, info) = crate::semantic::analyze_program(&prog).unwrap();
         lower_program_to_ir(&hir.program, &info).unwrap();

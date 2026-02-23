@@ -1,0 +1,8 @@
+let v = [1, 2, 3];
+let r = match (v) {
+  [1, _, b] => b == 3,
+  _ => false
+};
+System.assert(r == true);
+"ok"
+

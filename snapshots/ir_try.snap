@@ -1,0 +1,28 @@
+ir {
+  funcs: 1
+  entry: 0
+  fn[0] main params=0 entry=b0
+    vregs:
+      v0: Object
+      v1: Dynamic
+      v2: Bytes
+      v3: Dynamic
+      v4: Bytes
+      v5: Bytes
+      v6: Bytes
+    b0 (entry):
+      @0..0 ObjNew { dst: v0 }
+      @0..47 Try { catch_dst: v1, catch_block: b1, trap_only: false }
+      @12..18 ConstBytes { dst: v2, len: 4 }
+      @6..19 ToDyn { dst: v3, src: v2 }
+      @6..19 Throw { payload: v3 }
+      @20..24 ConstBytes { dst: v4, len: 2 }
+      @0..47 EndTry
+      term: Jmp { target: b2 }
+    b1 (catch):
+      @41..45 ConstBytes { dst: v5, len: 2 }
+      term: Jmp { target: b2 }
+    b2 (try_join):
+      @0..47 Phi { dst: v6, incomings: [(b0, v4), (b1, v5)] }
+      term: Ret { value: v6 }
+}

@@ -1,0 +1,11 @@
+let b = Bytes.new(1);
+b[0] = 65;
+let okb = (b[0] == 65);
+
+let a = Array.new<I32>(3);
+a[0] = 7;
+a[1] = 8;
+let oka = (a[1] == 8) && (Array.len(a) == 3);
+
+if (okb && oka) { "ok" } else { "bad" }
+

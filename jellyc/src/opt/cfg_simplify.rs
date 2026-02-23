@@ -27,7 +27,11 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-// CFG simplification: remove unreachable blocks and update references.
+// CFG (Control Flow Graph) simplification: remove unreachable blocks and update references.
+//
+// This pass removes unreachable blocks from each function and updates references to reachable blocks.
+//
+// This pass is used to simplify the CFG and make it easier to analyze and optimize.
 
 use crate::ir::{BlockId, IrBlock, IrFunction, IrModule, IrTerminator};
 use std::collections::HashSet;

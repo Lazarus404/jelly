@@ -1,0 +1,15 @@
+hir {
+  let x @0..10 : I32
+    I32Lit(1) : I32 @8..9
+  expr:
+    If : Bytes @11..49
+      cond:
+        Truthy : Bool @15..24
+          Var(x) : I32 @15..16
+      then:
+        Block : Bytes @26..34
+          BytesLit : Bytes @28..32
+      else:
+        Block : Bytes @40..49
+          BytesLit : Bytes @42..47
+}

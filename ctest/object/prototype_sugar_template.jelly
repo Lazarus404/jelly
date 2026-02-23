@@ -1,0 +1,14 @@
+prototype Box<T> {
+  a: "ok";
+};
+
+let b = Box<I32>;
+let o = { __proto__: b };
+
+let ok =
+  (Bytes.len(o.a) == 2) &&
+  (Bytes.get_u8(o.a, 0) == 111) &&
+  (Bytes.get_u8(o.a, 1) == 107);
+let r = if (ok) { "ok" } else { "bad" }
+System.assert(r == "ok");
+r

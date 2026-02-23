@@ -1,0 +1,7 @@
+let arr = [0, 1, 2];
+let r = match (arr) {
+  [0 | rest] when (Array.len(rest) == 2) => { "ok" },
+  _ => { "bad" },
+};
+System.assert(r == "ok");
+r

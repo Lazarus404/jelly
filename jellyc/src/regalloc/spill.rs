@@ -54,20 +54,17 @@ pub struct VInsn {
 /// - `vreg_to_reg`: maps global vreg -> physical reg (for spilled vregs, this
 ///   is the spill-reload reg we use; caller must set it)
 /// - `vreg_to_spill`: maps global vreg -> spill slot index (None if not spilled)
-/// - `vreg_types`: type id per vreg (used to pick correct spill-reload reg per type)
-/// - `spill_reload_per_tid`: for each type that spills, [reg0, reg1] for that type
+/// - `spill_reload_regs`: the two reserved spill-reload registers (both `Dynamic`)
 /// - `last_def_pc`: for each vreg, the PC of its last definition (used to order pops)
 ///
-/// When multiple spilled uses appear in one instruction, we assign regs per type so F64
-/// and I32 never share the same reload reg (avoids mov type mismatch). Within a type,
-/// we use regs[count % 2] so at most 2 spilled uses per type per instruction.
+/// When multiple spilled uses appear in one instruction, we pop into `spill_reload_regs`
+/// in LIFO order. At most 3 spilled uses per instruction are supported.
 pub fn insert_spill_ops(
     vinsns: &[VInsn],
     infos: &[InstrInfo],
     vreg_to_reg: &[u8],
     vreg_to_spill: &[Option<u32>],
-    vreg_types: &[u32],
-    spill_reload_per_tid: &[(u32, [u8; 2])],
+    spill_reload_regs: [u8; 3],
     last_def_pc: &[u32],
     f64_escape_per_param: Option<&[u8]>,
 ) -> Vec<Insn> {
@@ -91,23 +88,13 @@ pub fn insert_spill_ops(
             std::cmp::Reverse(last_def_pc.get(*gv as usize).copied().unwrap_or(0))
         });
 
-        // Assign spill-reload regs per type so F64 and I32 never share (avoids mov type mismatch).
-        // Within a type, use regs[count % 2] for up to 2 spilled uses per instruction.
-        let mut tid_count: std::collections::HashMap<u32, usize> = std::collections::HashMap::new();
         let mut spilled_use_reg: std::collections::HashMap<u32, u8> = std::collections::HashMap::new();
-        for &(gv, _) in spilled_uses.iter() {
-            let tid = vreg_types.get(gv as usize).copied().unwrap_or(0);
-            let r = spill_reload_per_tid
-                .iter()
-                .find(|(t, _)| *t == tid)
-                .and_then(|(_, regs)| {
-                    let c = tid_count.entry(tid).or_insert(0);
-                    let idx = *c % 2;
-                    *c += 1;
-                    Some(if idx == 0 { regs[0] } else { regs[1] })
-                })
-                .unwrap_or_else(|| vreg_to_reg.get(gv as usize).copied().unwrap_or(0));
-            spilled_use_reg.insert(gv, r);
+        for (i, &(gv, _)) in spilled_uses.iter().enumerate() {
+            assert!(
+                i < 3,
+                "spilling currently supports at most 3 spilled uses per instruction"
+            );
+            spilled_use_reg.insert(gv, spill_reload_regs[i]);
         }
 
         for &(gv, _) in spilled_uses.iter() {
@@ -142,7 +129,8 @@ pub fn insert_spill_ops(
                 || x == Op::ConstNull as u8
                 || x == Op::ConstFun as u8 =>
             {
-                (map_reg(vi.a), 0, 0)
+                // Preserve `c`: e.g. ConstBool and ConstI8Imm encode their immediate in `c`.
+                (map_reg(vi.a), 0, vi.c as u8)
             }
             x if x == Op::Ret as u8 || x == Op::Throw as u8 => (map_reg(vi.a), 0, 0),
             x if x == Op::Mov as u8
@@ -251,9 +239,8 @@ pub fn insert_spill_ops(
             x if x == Op::ObjGet as u8 || x == Op::ObjSet as u8 => {
                 (map_reg(vi.a), map_reg(vi.b), map_reg(vi.c))
             }
-            x if x == Op::Closure as u8 || x == Op::BindThis as u8 => {
-                (map_reg(vi.a), map_reg(vi.b), map_reg(vi.c))
-            }
+            x if x == Op::Closure as u8 => (map_reg(vi.a), map_reg(vi.b), vi.c as u8), // c = ncaps
+            x if x == Op::BindThis as u8 => (map_reg(vi.a), map_reg(vi.b), map_reg(vi.c)),
             x if x == Op::JmpIf as u8 => (map_reg(vi.a), 0, 0),
             x if x == Op::Try as u8 => (map_reg(vi.a), vi.b as u8, 0), // b = trap_only
             x if x == Op::SwitchKind as u8 => (map_reg(vi.a), vi.b as u8, 0), // b = ncases, not a reg
@@ -272,11 +259,13 @@ pub fn insert_spill_ops(
                 });
                 continue;
             }
+            x if x == Op::Call as u8 => (map_reg(vi.a), map_reg(vi.b), vi.c as u8), // c = nargs
             x if x == Op::Jmp as u8
                 || x == Op::EndTry as u8
                 || x == Op::CaseKind as u8 =>
             {
-                (0, 0, 0)
+                // Data-only entries; preserve fields (e.g. CaseKind.a is the kind code).
+                (vi.a as u8, vi.b as u8, vi.c as u8)
             }
             _ => (map_reg(vi.a), map_reg(vi.b), map_reg(vi.c)),
         };
@@ -327,8 +316,6 @@ mod tests {
         ];
         let vreg_to_reg = vec![0, 1]; // v0->r0, v1->r1 (spill reload)
         let vreg_to_spill = vec![None, Some(0)]; // v1 spilled
-        let vreg_types = vec![4, 10]; // v0=I32, v1=Dynamic (T_DYNAMIC=10)
-        let spill_reload_per_tid = vec![(10u32, [1u8, 1u8])]; // Dynamic spills to r1
         let last_def_pc = vec![0, 1]; // v0 def at 0, v1 def at 1
 
         let out = insert_spill_ops(
@@ -336,8 +323,7 @@ mod tests {
             &infos,
             &vreg_to_reg,
             &vreg_to_spill,
-            &vreg_types,
-            &spill_reload_per_tid,
+            [1u8, 2u8, 3u8],
             &last_def_pc,
             None,
         );
@@ -352,5 +338,182 @@ mod tests {
         assert_eq!(out[3].a, 1);
         assert_eq!(out[4].op, Op::Ret as u8);
         assert_eq!(out[4].a, 1);
+    }
+
+    #[test]
+    fn spill_preserves_const_bool_c_field() {
+        // v0 = ConstBool true; (spilled) → expect ConstBool.c == 1 before SpillPush.
+        let vinsns = vec![VInsn { op: Op::ConstBool as u8, a: 0, b: 0, c: 1, imm: 0 }];
+        let infos = vec![InstrInfo { uses: vec![], defs: vec![VReg(0)] }];
+        let vreg_to_reg = vec![5]; // v0 assigned to spill reload reg r5
+        let vreg_to_spill = vec![Some(0)];
+        let last_def_pc = vec![0];
+
+        let out = insert_spill_ops(
+            &vinsns,
+            &infos,
+            &vreg_to_reg,
+            &vreg_to_spill,
+            [5u8, 6u8, 7u8],
+            &last_def_pc,
+            None,
+        );
+        assert!(out.len() >= 2);
+        assert_eq!(out[0].op, Op::ConstBool as u8);
+        assert_eq!(out[0].a, 5);
+        assert_eq!(out[0].c, 1);
+        assert_eq!(out[1].op, Op::SpillPush as u8);
+        assert_eq!(out[1].a, 5);
+    }
+
+    #[test]
+    fn spill_preserves_const_i8_imm_c_field() {
+        // v0 = ConstI8Imm 7; (spilled) → expect ConstI8Imm.c == 7 before SpillPush.
+        let vinsns = vec![VInsn { op: Op::ConstI8Imm as u8, a: 0, b: 0, c: 7, imm: 0 }];
+        let infos = vec![InstrInfo { uses: vec![], defs: vec![VReg(0)] }];
+        let vreg_to_reg = vec![9]; // v0 assigned to spill reload reg r9
+        let vreg_to_spill = vec![Some(0)];
+        let last_def_pc = vec![0];
+
+        let out = insert_spill_ops(
+            &vinsns,
+            &infos,
+            &vreg_to_reg,
+            &vreg_to_spill,
+            [9u8, 10u8, 11u8],
+            &last_def_pc,
+            None,
+        );
+        assert!(out.len() >= 2);
+        assert_eq!(out[0].op, Op::ConstI8Imm as u8);
+        assert_eq!(out[0].a, 9);
+        assert_eq!(out[0].c, 7);
+        assert_eq!(out[1].op, Op::SpillPush as u8);
+        assert_eq!(out[1].a, 9);
+    }
+
+    #[test]
+    fn preserves_case_kind_fields_even_with_spill_inserter() {
+        let vinsns = vec![VInsn {
+            op: Op::CaseKind as u8,
+            a: 11,
+            b: 0,
+            c: 0,
+            imm: 123,
+        }];
+        let infos = vec![InstrInfo { uses: vec![], defs: vec![] }];
+        let vreg_to_reg = vec![0u8; 1];
+        let vreg_to_spill = vec![None; 1];
+        let last_def_pc = vec![0u32; 1];
+
+        let out = insert_spill_ops(
+            &vinsns,
+            &infos,
+            &vreg_to_reg,
+            &vreg_to_spill,
+            [1u8, 2u8, 3u8],
+            &last_def_pc,
+            None,
+        );
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].op, Op::CaseKind as u8);
+        assert_eq!(out[0].a, 11);
+        assert_eq!(out[0].imm, 123);
+    }
+
+    #[test]
+    fn preserves_call_and_closure_immediates() {
+        let vinsns = vec![
+            VInsn {
+                op: Op::Call as u8,
+                a: 0,     // dst vreg
+                b: 1,     // arg_base vreg
+                c: 3,     // nargs (immediate)
+                imm: 42,  // func index
+            },
+            VInsn {
+                op: Op::Closure as u8,
+                a: 0,    // dst vreg
+                b: 1,    // cap_base vreg
+                c: 7,    // ncaps (immediate)
+                imm: 99, // func index
+            },
+        ];
+        let infos = vec![
+            InstrInfo { uses: vec![], defs: vec![] },
+            InstrInfo { uses: vec![], defs: vec![] },
+        ];
+        let vreg_to_reg = vec![10u8, 20u8];
+        let vreg_to_spill = vec![None, None];
+        let last_def_pc = vec![0u32, 0u32];
+
+        let out = insert_spill_ops(
+            &vinsns,
+            &infos,
+            &vreg_to_reg,
+            &vreg_to_spill,
+            [1u8, 2u8, 3u8],
+            &last_def_pc,
+            None,
+        );
+        assert_eq!(out.len(), 2);
+
+        assert_eq!(out[0].op, Op::Call as u8);
+        assert_eq!(out[0].a, 10);
+        assert_eq!(out[0].b, 20);
+        assert_eq!(out[0].c, 3);
+        assert_eq!(out[0].imm, 42);
+
+        assert_eq!(out[1].op, Op::Closure as u8);
+        assert_eq!(out[1].a, 10);
+        assert_eq!(out[1].b, 20);
+        assert_eq!(out[1].c, 7);
+        assert_eq!(out[1].imm, 99);
+    }
+
+    #[test]
+    fn supports_three_spilled_operands_in_one_insn() {
+        // ObjSet uses 3 operands (value, obj, atom). If all are spilled, we must be able to
+        // pop three values into three distinct reload regs and map the insn to those regs.
+        let vinsns = vec![VInsn {
+            op: Op::ObjSet as u8,
+            a: 0,
+            b: 1,
+            c: 2,
+            imm: 0,
+        }];
+        let infos = vec![InstrInfo {
+            uses: vec![VReg(0), VReg(1), VReg(2)],
+            defs: vec![],
+        }];
+        let vreg_to_reg = vec![99u8, 99u8, 99u8]; // placeholder; spilled mapping overrides
+        let vreg_to_spill = vec![Some(0), Some(1), Some(2)];
+        let last_def_pc = vec![0u32, 1u32, 2u32];
+
+        let out = insert_spill_ops(
+            &vinsns,
+            &infos,
+            &vreg_to_reg,
+            &vreg_to_spill,
+            [10u8, 11u8, 12u8],
+            &last_def_pc,
+            None,
+        );
+
+        assert!(out.len() >= 4);
+        assert_eq!(out[0].op, Op::SpillPop as u8);
+        assert_eq!(out[1].op, Op::SpillPop as u8);
+        assert_eq!(out[2].op, Op::SpillPop as u8);
+        // v2 has the latest def → popped first into r10; then v1→r11; then v0→r12.
+        assert_eq!(out[0].a, 10);
+        assert_eq!(out[1].a, 11);
+        assert_eq!(out[2].a, 12);
+
+        // Mapped instruction must use the three reload regs.
+        assert_eq!(out[3].op, Op::ObjSet as u8);
+        // ObjSet encodes value in `a` (v0), obj in `b` (v1), atom in `c` (v2).
+        assert_eq!(out[3].a, 12);
+        assert_eq!(out[3].b, 11);
+        assert_eq!(out[3].c, 10);
     }
 }

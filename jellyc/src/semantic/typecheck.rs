@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::ast::{Expr, ExprKind, MatchArm, Pattern, PatternKind, Program, Span, Stmt, StmtKind};
 use crate::error::{CompileError, ErrorKind};
-use crate::hir::{NodeId, SemanticInfo};
+use crate::hir::{ConstInit, NodeId, SemanticInfo};
 use crate::ir::TypeId;
 use crate::typectx::{TypeCtx, TypeRepr};
 use crate::typectx::{
@@ -40,6 +40,33 @@ mod tests {
         crate::resolve::resolve_program(&p).unwrap();
         let info = typecheck_program(&p).unwrap();
         assert_eq!(info.expr_types.get(&NodeId(p.expr.span)).copied(), Some(T_BYTES));
+    }
+
+    #[test]
+    fn const_inits_are_recorded_and_folded() {
+        let src = "const x = 1 + 2 * 3; \"ok\"";
+        let p = crate::parse::parse_program(src).unwrap();
+        crate::resolve::resolve_program(&p).unwrap();
+        let info = typecheck_program(&p).unwrap();
+
+        let s0 = &p.stmts[0];
+        let init = info.const_inits.get(&NodeId(s0.span)).expect("const init");
+        match init {
+            ConstInit::Value(crate::hir::ConstValue::Int(7)) => {}
+            other => panic!("unexpected const init: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn const_bytes_var_init_records_alias() {
+        let src = "const a = \"A\"; const b = a; \"ok\"";
+        let p = crate::parse::parse_program(src).unwrap();
+        crate::resolve::resolve_program(&p).unwrap();
+        let info = typecheck_program(&p).unwrap();
+
+        let s1 = &p.stmts[1];
+        let init = info.const_inits.get(&NodeId(s1.span)).expect("const init");
+        assert_eq!(init, &ConstInit::Alias("a".to_string()));
     }
 }
 
@@ -173,7 +200,9 @@ fn intern_type_repr(tc: &mut TypeCtx, tr: &TypeRepr, span: Span) -> Result<TypeI
 
 struct TypeChecker {
     env_stack: Vec<HashMap<String, TypeId>>,
+    const_stack: Vec<HashMap<String, ConstInit>>,
     module_alias_exports: HashMap<String, HashMap<String, TypeId>>,
+    ret_stack: Vec<TypeId>,
     info: SemanticInfo,
 }
 
@@ -181,7 +210,9 @@ impl TypeChecker {
     fn new(inputs: TypecheckInputs<'_>) -> Self {
         Self {
             env_stack: vec![inputs.prelude_env],
+            const_stack: vec![HashMap::new()],
             module_alias_exports: inputs.module_alias_exports,
+            ret_stack: Vec::new(),
             info: SemanticInfo::default(),
         }
     }
@@ -201,8 +232,20 @@ impl TypeChecker {
         self.env_stack.iter().rev().find_map(|m| m.get(name)).copied()
     }
 
+    fn lookup_const(&self, name: &str) -> Option<ConstInit> {
+        self.const_stack.iter().rev().find_map(|m| m.get(name)).cloned()
+    }
+
+    fn bind_const(&mut self, name: &str, init: ConstInit) {
+        self.const_stack
+            .last_mut()
+            .expect("const stack")
+            .insert(name.to_string(), init);
+    }
+
     fn push_scope(&mut self) {
         self.env_stack.push(HashMap::new());
+        self.const_stack.push(HashMap::new());
     }
 
     fn pop_scope(&mut self) {
@@ -210,15 +253,13 @@ impl TypeChecker {
         if self.env_stack.is_empty() {
             self.env_stack.push(HashMap::new());
         }
+        self.const_stack.pop();
+        if self.const_stack.is_empty() {
+            self.const_stack.push(HashMap::new());
+        }
     }
 
     fn check_program(&mut self, p: &Program) -> Result<(), CompileError> {
-        // Seed builtins namespaces as Objects for typing Member(.x) and dumps.
-        for &ns in ["System", "Bytes", "Integer", "Float", "Math", "Atom", "Object", "Array", "List"].iter() {
-            if self.lookup(ns).is_none() {
-                self.bind_local(ns, T_OBJECT);
-            }
-        }
         // `__global` exists in lowering; treat it as Object for capture/type consistency.
         self.bind_local("__global", T_OBJECT);
 
@@ -258,7 +299,14 @@ impl TypeChecker {
                 s.span,
                 "prototype must be expanded before semantic analysis",
             )),
-            StmtKind::Let { name, type_params, ty, expr, .. } => {
+            StmtKind::Let {
+                is_const,
+                name,
+                type_params,
+                ty,
+                expr,
+                ..
+            } => {
                 if !type_params.is_empty() {
                     return Err(CompileError::new(
                         ErrorKind::Type,
@@ -269,6 +317,10 @@ impl TypeChecker {
                 let is_discard = name == "_";
                 if is_discard {
                     let _ = self.check_expr(expr, None)?;
+                    if *is_const {
+                        let mut lookup = |n: &str| self.lookup_const(n);
+                        let _ = super::const_eval::eval_const_expr(expr, &self.info, &mut lookup)?;
+                    }
                     return Ok(());
                 }
 
@@ -300,6 +352,12 @@ impl TypeChecker {
                 if init_tid != bind_tid {
                     return Err(CompileError::new(ErrorKind::Type, s.span, "let initializer type mismatch"));
                 }
+                if *is_const {
+                    let mut lookup = |n: &str| self.lookup_const(n);
+                    let init = super::const_eval::eval_const_expr(expr, &self.info, &mut lookup)?;
+                    self.info.const_inits.insert(NodeId(s.span), init.clone());
+                    self.bind_const(name.as_str(), init);
+                }
                 self.record_binding(s.span, bind_tid);
                 if !matches!(&expr.node, ExprKind::Fn { .. }) {
                     self.bind_local(name, bind_tid);
@@ -307,6 +365,13 @@ impl TypeChecker {
                 Ok(())
             }
             StmtKind::Assign { name, expr } => {
+                if self.lookup_const(name.as_str()).is_some() {
+                    return Err(CompileError::new(
+                        ErrorKind::Type,
+                        s.span,
+                        format!("cannot assign to const binding '{}'", name),
+                    ));
+                }
                 let dst_tid = self
                     .lookup(name)
                     .ok_or_else(|| CompileError::new(ErrorKind::Name, s.span, format!("unknown variable '{}'", name)))?;
@@ -321,10 +386,9 @@ impl TypeChecker {
                 Ok(())
             }
             StmtKind::While { cond, body } => {
-                let t = self.check_expr(cond, Some(T_BOOL))?;
-                if t != T_BOOL {
-                    return Err(CompileError::new(ErrorKind::Type, cond.span, "while condition must be bool"));
-                }
+                // Jelly truthiness: loop conditions need not be `Bool` (everything except `null`
+                // and `false` is truthy). Lowering will insert truthiness conversion if needed.
+                let _ = self.check_expr(cond, None)?;
                 self.push_scope();
                 for st in body {
                     self.check_stmt(st)?;
@@ -339,7 +403,14 @@ impl TypeChecker {
             }
             StmtKind::Return { expr } => {
                 if let Some(e) = expr {
-                    let _ = self.check_expr(e, None)?;
+                    if let Some(&ret_tid) = self.ret_stack.last() {
+                        let got = self.check_expr(e, Some(ret_tid))?;
+                        let coerced = self.coerce_type(got, ret_tid, e.span)?;
+                        // Record the coerced type so lowering can be mechanical.
+                        self.record_expr(e.span, coerced);
+                    } else {
+                        let _ = self.check_expr(e, None)?;
+                    }
                 }
                 Ok(())
             }
@@ -348,7 +419,19 @@ impl TypeChecker {
                 Ok(())
             }
             StmtKind::MemberAssign { base, expr, .. } => {
-                let _ = self.check_expr(base, Some(T_OBJECT))?;
+                let t0 = self.check_expr(base, None)?;
+                let t_obj = if t0 == T_DYNAMIC {
+                    self.check_expr(base, Some(T_OBJECT))?
+                } else {
+                    t0
+                };
+                if !self.is_object_kind(t_obj) {
+                    return Err(CompileError::new(
+                        ErrorKind::Type,
+                        s.span,
+                        "member assignment expects an Object",
+                    ));
+                }
                 let _ = self.check_expr(expr, None)?;
                 Ok(())
             }
@@ -379,8 +462,24 @@ impl TypeChecker {
     }
 
     fn check_expr(&mut self, e: &Expr, expect: Option<TypeId>) -> Result<TypeId, CompileError> {
-        let tid = self.check_expr_impl(e, expect)?;
-        self.record_expr(e.span, tid);
+        // IMPORTANT: `Dynamic` is a boxing boundary, not an inference hint.
+        //
+        // If a context expects `Dynamic` (e.g. `let x: Any = <expr>`), we want to infer and
+        // typecheck `<expr>` using its natural/static types, then coerce the *result* to Dynamic.
+        // Propagating `expect = Dynamic` downward forces all subexpressions to become Dynamic,
+        // which leads to unnecessary ToDyn/FromDyn churn in lowering/codegen.
+        let impl_expect = if expect == Some(T_DYNAMIC) { None } else { expect };
+        let tid0 = self.check_expr_impl(e, impl_expect)?;
+        let tid = if let Some(et) = expect {
+            self.coerce_type(tid0, et, e.span)?
+        } else {
+            tid0
+        };
+        // `expect = Dynamic` should not force the expression node itself to become Dynamic.
+        // Record the expression's natural/static type, and let lowering insert boxing at the
+        // actual boundary use-site (let/assign/call/return/throw, etc).
+        let record_tid = if expect == Some(T_DYNAMIC) { tid0 } else { tid };
+        self.record_expr(e.span, record_tid);
         Ok(tid)
     }
 
@@ -437,11 +536,15 @@ impl TypeChecker {
             }
             ExprKind::Member { base, name } => {
                 // Builtin namespaces must be called, not extracted as values.
+                // But allow shadowing (e.g. `import foo as Bytes` or `let Bytes = {...}`).
                 if let ExprKind::Var(ns) = &base.node {
-                    if matches!(
-                        ns.as_str(),
-                        "System" | "Bytes" | "Integer" | "Float" | "Atom" | "Object" | "Array" | "List"
-                    ) {
+                    let shadowed = self.lookup(ns).is_some();
+                    if !shadowed
+                        && matches!(
+                            ns.as_str(),
+                            "System" | "Bytes" | "Integer" | "Float" | "Atom" | "Object" | "Array" | "List"
+                        )
+                    {
                         return Err(CompileError::new(
                             ErrorKind::Type,
                             e.span,
@@ -450,24 +553,34 @@ impl TypeChecker {
                     }
                 }
 
-                let t_obj = self.check_expr(base, Some(T_OBJECT))?;
+                // Module namespace object: use declared export type if available.
+                if let ExprKind::Var(alias) = &base.node {
+                    if let Some(exports) = self.module_alias_exports.get(alias) {
+                        let exp_tid = exports.get(name).copied();
+                        // Ensure the module alias itself is typed/recorded (lowering requires it).
+                        let _ = self.check_expr(base, Some(T_OBJECT))?;
+                        let out_tid = exp_tid.or(expect).unwrap_or(T_DYNAMIC);
+                        if let Some(et) = expect {
+                            return self.coerce_type(out_tid, et, e.span);
+                        }
+                        return Ok(out_tid);
+                    }
+                }
+
+                // Regular object / nominal object kinds.
+                // Preserve nominal object types, but allow `dynamic` to be treated as `object` here.
+                let t_obj0 = self.check_expr(base, None)?;
+                let t_obj = if t_obj0 == T_DYNAMIC {
+                    self.check_expr(base, Some(T_OBJECT))?
+                } else {
+                    t_obj0
+                };
                 if !self.is_object_kind(t_obj) {
                     return Err(CompileError::new(
                         ErrorKind::Type,
                         e.span,
                         "member access currently only supported for Object (obj.field)",
                     ));
-                }
-
-                // Module namespace object: use declared export type if available.
-                if let ExprKind::Var(alias) = &base.node {
-                    if let Some(exports) = self.module_alias_exports.get(alias) {
-                        let out_tid = exports.get(name).copied().or(expect).unwrap_or(T_DYNAMIC);
-                        if let Some(et) = expect {
-                            return self.coerce_type(out_tid, et, e.span);
-                        }
-                        return Ok(out_tid);
-                    }
                 }
 
                 // Tuple element access: `t.0`.
@@ -499,39 +612,295 @@ impl TypeChecker {
                 Ok(T_DYNAMIC)
             }
             ExprKind::Call { callee, type_args, args } => {
+                // Builtin namespaces can be shadowed by imports/lets (e.g. `import m as Bytes`).
+                // If shadowed, treat this as a normal call; don't apply builtin typing rules.
+                let shadowed_ns = match &callee.node {
+                    ExprKind::Member { base, .. } => match &base.node {
+                        ExprKind::Var(ns) => self.lookup(ns).is_some(),
+                        _ => false,
+                    },
+                    _ => false,
+                };
+
                 // Builtins.
-                if let Some(cs) = builtin_constraints::builtin_constraints(
-                    callee,
-                    type_args,
-                    args.len(),
-                    expect,
-                    &mut self.info.type_ctx,
-                    true,
-                    e.span,
-                )? {
-                    for (i, a) in args.iter().enumerate() {
-                        let et = match cs.args.get(i).copied().unwrap_or(builtin_constraints::ArgConstraint::Any) {
-                            builtin_constraints::ArgConstraint::Exact(tid) => Some(tid),
-                            _ => None,
-                        };
-                        let _ = self.check_expr(a, et)?;
+                if !shadowed_ns {
+                if let ExprKind::Member { base, name } = &callee.node {
+                    if let ExprKind::Var(ns) = &base.node {
+                        if ns == "Array" {
+                            if matches!(name.as_str(), "len" | "get" | "set") {
+                                if !type_args.is_empty() {
+                                    return Err(CompileError::new(
+                                        ErrorKind::Type,
+                                        e.span,
+                                        format!("Array.{} does not take type arguments", name),
+                                    ));
+                                }
+                                // Determine the array type from arg0, then typecheck the rest using centralized rules.
+                                let t_arr = args
+                                    .get(0)
+                                    .ok_or_else(|| CompileError::new(ErrorKind::Type, e.span, "Array.* expects at least 1 arg"))
+                                    .and_then(|a0| self.check_expr(a0, None))?;
+                                if let Some(cs) = builtin_constraints::array_constraints_from_arr_tid(
+                                    name,
+                                    args.len(),
+                                    t_arr,
+                                    e.span,
+                                )? {
+                                    for (i, a) in args.iter().enumerate() {
+                                        let et = match cs.args.get(i).copied().unwrap_or(builtin_constraints::ArgConstraint::Any) {
+                                            builtin_constraints::ArgConstraint::Exact(tid) => Some(tid),
+                                            _ => None,
+                                        };
+                                        let _ = self.check_expr(a, et)?;
+                                    }
+                                    let arg_tids: Vec<TypeId> = cs
+                                        .args
+                                        .iter()
+                                        .map(|c| match c {
+                                            builtin_constraints::ArgConstraint::Exact(tid) => *tid,
+                                            _ => T_DYNAMIC,
+                                        })
+                                        .collect();
+                                    let fun_tid = self.info.type_ctx.intern_fun_type(cs.ret, &arg_tids);
+                                    self.record_expr(callee.span, fun_tid);
+                                    return Ok(cs.ret);
+                                }
+                            }
+                        }
+                        if ns == "List" && matches!(name.as_str(), "head" | "tail" | "is_nil") {
+                            if !type_args.is_empty() {
+                                return Err(CompileError::new(
+                                    ErrorKind::Type,
+                                    e.span,
+                                    format!("List.{} does not take type arguments", name),
+                                ));
+                            }
+                            let t_list = args
+                                .get(0)
+                                .ok_or_else(|| CompileError::new(ErrorKind::Type, e.span, "List.* expects 1 arg"))
+                                .and_then(|a0| self.check_expr(a0, None))?;
+                            if let Some(cs) = builtin_constraints::list_constraints_from_list_tid(
+                                name,
+                                args.len(),
+                                t_list,
+                                e.span,
+                            )? {
+                                for (i, a) in args.iter().enumerate() {
+                                    let et = match cs
+                                        .args
+                                        .get(i)
+                                        .copied()
+                                        .unwrap_or(builtin_constraints::ArgConstraint::Any)
+                                    {
+                                        builtin_constraints::ArgConstraint::Exact(tid) => Some(tid),
+                                        _ => None,
+                                    };
+                                    let _ = self.check_expr(a, et)?;
+                                }
+                                let arg_tids: Vec<TypeId> = cs
+                                    .args
+                                    .iter()
+                                    .map(|c| match c {
+                                        builtin_constraints::ArgConstraint::Exact(tid) => *tid,
+                                        _ => T_DYNAMIC,
+                                    })
+                                    .collect();
+                                let fun_tid = self.info.type_ctx.intern_fun_type(cs.ret, &arg_tids);
+                                self.record_expr(callee.span, fun_tid);
+                                return Ok(cs.ret);
+                            }
+                        }
                     }
-                    // Callee type (for dumps) is a best-effort fun type.
-                    let arg_tids: Vec<TypeId> = cs
-                        .args
-                        .iter()
-                        .map(|c| match c {
-                            builtin_constraints::ArgConstraint::Exact(tid) => *tid,
-                            _ => T_DYNAMIC,
-                        })
-                        .collect();
-                    let fun_tid = self.info.type_ctx.intern_fun_type(cs.ret, &arg_tids);
-                    self.record_expr(callee.span, fun_tid);
-                    return Ok(cs.ret);
+                }
+                }
+
+                // Object.set(obj, key, value) returns the receiver's (possibly nominal) object kind.
+                if !shadowed_ns {
+                if let ExprKind::Member { base, name } = &callee.node {
+                    if let ExprKind::Var(ns) = &base.node {
+                        if ns == "Object" && name == "set" {
+                            if !type_args.is_empty() {
+                                return Err(CompileError::new(
+                                    ErrorKind::Type,
+                                    e.span,
+                                    "Object.set does not take type arguments",
+                                ));
+                            }
+                            if args.len() != 3 {
+                                return Err(CompileError::new(ErrorKind::Type, e.span, "Object.set expects 3 args"));
+                            }
+
+                            let recv_expect = expect.filter(|&et| self.is_object_kind(et) && !self.info.type_ctx.is_tuple_type(et));
+                            let t_obj = if let Some(et) = recv_expect {
+                                let t = self.check_expr(&args[0], Some(et))?;
+                                if t != et {
+                                    return Err(CompileError::new(
+                                        ErrorKind::Type,
+                                        args[0].span,
+                                        "Object.set receiver type mismatch",
+                                    ));
+                                }
+                                et
+                            } else {
+                                let t0 = self.check_expr(&args[0], None)?;
+                                if t0 == T_DYNAMIC {
+                                    self.check_expr(&args[0], Some(T_OBJECT))?
+                                } else {
+                                    t0
+                                }
+                            };
+
+                            if !self.is_object_kind(t_obj) {
+                                return Err(CompileError::new(
+                                    ErrorKind::Type,
+                                    args[0].span,
+                                    "Object.set expects Object",
+                                ));
+                            }
+
+                            let _ = self.check_expr(&args[1], Some(T_ATOM))?;
+                            let _ = self.check_expr(&args[2], None)?;
+
+                            // Best-effort callee type for dumps.
+                            let fun_tid =
+                                self.info
+                                    .type_ctx
+                                    .intern_fun_type(t_obj, &[t_obj, T_ATOM, T_DYNAMIC]);
+                            self.record_expr(callee.span, fun_tid);
+                            return Ok(t_obj);
+                        }
+                    }
+                }
+                }
+
+                if !shadowed_ns {
+                    if let Some(cs) = builtin_constraints::builtin_constraints(
+                        callee,
+                        type_args,
+                        args.len(),
+                        expect,
+                        &mut self.info.type_ctx,
+                        true,
+                        e.span,
+                    )? {
+                        for (i, a) in args.iter().enumerate() {
+                            match cs
+                                .args
+                                .get(i)
+                                .copied()
+                                .unwrap_or(builtin_constraints::ArgConstraint::Any)
+                            {
+                                builtin_constraints::ArgConstraint::Exact(tid) => {
+                                    let _ = self.check_expr(a, Some(tid))?;
+                                }
+                                builtin_constraints::ArgConstraint::ObjectKind => {
+                                    let t0 = self.check_expr(a, None)?;
+                                    let t = if t0 == T_DYNAMIC {
+                                        self.check_expr(a, Some(T_OBJECT))?
+                                    } else {
+                                        t0
+                                    };
+                                    if !self.is_object_kind(t) {
+                                        return Err(CompileError::new(
+                                            ErrorKind::Type,
+                                            a.span,
+                                            "builtin expects an Object",
+                                        ));
+                                    }
+                                }
+                                builtin_constraints::ArgConstraint::Numeric => {
+                                    let t = self.check_expr(a, None)?;
+                                    if !is_numeric(t) {
+                                        return Err(CompileError::new(
+                                            ErrorKind::Type,
+                                            a.span,
+                                            "builtin expects numeric",
+                                        ));
+                                    }
+                                }
+                                builtin_constraints::ArgConstraint::Any => {
+                                    let _ = self.check_expr(a, None)?;
+                                }
+                            }
+                        }
+                        // Callee type (for dumps) is a best-effort fun type.
+                        let arg_tids: Vec<TypeId> = cs
+                            .args
+                            .iter()
+                            .map(|c| match c {
+                                builtin_constraints::ArgConstraint::Exact(tid) => *tid,
+                                builtin_constraints::ArgConstraint::ObjectKind => T_OBJECT,
+                                _ => T_DYNAMIC,
+                            })
+                            .collect();
+                        let fun_tid = self.info.type_ctx.intern_fun_type(cs.ret, &arg_tids);
+                        self.record_expr(callee.span, fun_tid);
+                        return Ok(cs.ret);
+                    }
                 }
 
                 // Method call sugar and module namespace calls are handled by typing the callee span.
-                // We typecheck callee first to discover a function type (possibly via module export).
+                //
+                // Method call sugar: `obj.m(args...)` where `obj` is an Object value.
+                // We treat `obj.m` as a bound function value `(A...) -> R` for the purpose of typing the call.
+                // Lowering is responsible for emitting `ObjGetAtom` + `BindThis` + `Call`.
+                if let ExprKind::Member { base, name: _ } = &callee.node {
+                    // Don't steal module namespace calls (`Mod.f(...)`), which are typed via exports.
+                    if let ExprKind::Var(alias) = &base.node {
+                        if self.module_alias_exports.contains_key(alias.as_str()) {
+                            // fall through to callee typing via `check_expr(callee, None)`
+                        } else {
+                            let tb0 = self.check_expr(base, None)?;
+                            let tb = if tb0 == T_DYNAMIC {
+                                self.check_expr(base, Some(T_OBJECT))?
+                            } else {
+                                tb0
+                            };
+                            if !self.is_object_kind(tb) {
+                                return Err(CompileError::new(
+                                    ErrorKind::Type,
+                                    base.span,
+                                    "method receiver must be Object",
+                                ));
+                            }
+
+                            let mut arg_tids: Vec<TypeId> = Vec::with_capacity(args.len());
+                            for a in args {
+                                arg_tids.push(self.check_expr(a, None)?);
+                            }
+
+                            // Return type comes from context when available; otherwise Dynamic.
+                            let ret_tid = expect.unwrap_or(T_DYNAMIC);
+                            let fun_tid = self.info.type_ctx.intern_fun_type(ret_tid, &arg_tids);
+                            self.record_expr(callee.span, fun_tid);
+                            return Ok(ret_tid);
+                        }
+                    } else {
+                        let tb0 = self.check_expr(base, None)?;
+                        let tb = if tb0 == T_DYNAMIC {
+                            self.check_expr(base, Some(T_OBJECT))?
+                        } else {
+                            tb0
+                        };
+                        if !self.is_object_kind(tb) {
+                            return Err(CompileError::new(
+                                ErrorKind::Type,
+                                base.span,
+                                "method receiver must be Object",
+                            ));
+                        }
+                        let mut arg_tids: Vec<TypeId> = Vec::with_capacity(args.len());
+                        for a in args {
+                            arg_tids.push(self.check_expr(a, None)?);
+                        }
+                        let ret_tid = expect.unwrap_or(T_DYNAMIC);
+                        let fun_tid = self.info.type_ctx.intern_fun_type(ret_tid, &arg_tids);
+                        self.record_expr(callee.span, fun_tid);
+                        return Ok(ret_tid);
+                    }
+                }
+
+                // Otherwise, typecheck callee to discover a function type (possibly via module export).
                 let callee_tid = self.check_expr(callee, None)?;
                 let (sig_args, sig_ret) = self.fun_sig(callee_tid, e.span)?;
                 if sig_args.len() != args.len() {
@@ -549,7 +918,21 @@ impl TypeChecker {
             )),
             ExprKind::ArrayLit(elems) => {
                 if elems.is_empty() {
-                    return Ok(expect.unwrap_or(T_DYNAMIC));
+                    let Some(et) = expect else {
+                        return Err(CompileError::new(
+                            ErrorKind::Type,
+                            e.span,
+                            "empty array literal requires a type annotation",
+                        ));
+                    };
+                    if et != T_ARRAY_I32 && et != T_ARRAY_BYTES {
+                        return Err(CompileError::new(
+                            ErrorKind::Type,
+                            e.span,
+                            "empty array literal requires Array<I32> or Array<Bytes>",
+                        ));
+                    }
+                    return Ok(et);
                 }
                 let t0 = self.check_expr(&elems[0], None)?;
                 for el in &elems[1..] {
@@ -575,11 +958,19 @@ impl TypeChecker {
                 for (_k, v) in fields {
                     let _ = self.check_expr(v, None)?;
                 }
+                if let Some(et) = expect {
+                    if self.is_object_kind(et) && !self.info.type_ctx.is_tuple_type(et) {
+                        return Ok(et);
+                    }
+                }
                 Ok(T_OBJECT)
             }
             ExprKind::Index { base, index } => {
                 let tb = self.check_expr(base, None)?;
-                let _ = self.check_expr(index, Some(T_I32))?;
+                let ti = self.check_expr(index, Some(T_I32))?;
+                let ti = self.coerce_type(ti, T_I32, index.span)?;
+                // Record the coerced type so lowering doesn't need contextual guessing.
+                self.record_expr(index.span, ti);
                 match tb {
                     T_ARRAY_I32 => Ok(T_I32),
                     T_ARRAY_BYTES => Ok(T_BYTES),
@@ -601,6 +992,7 @@ impl TypeChecker {
 
                 // Function literals see outer bindings (captures, self-recursion sugar).
                 self.push_scope();
+                self.ret_stack.push(sig_ret);
                 for (i, (pn, ann)) in params.iter().enumerate() {
                     let tid = if let Some(t) = ann {
                         self.info.type_ctx.resolve_ty(t)?
@@ -613,8 +1005,11 @@ impl TypeChecker {
                     self.check_stmt(st)?;
                 }
                 if let Some(t) = tail {
-                    let _ = self.check_expr(t, Some(sig_ret))?;
+                    let got = self.check_expr(t, Some(sig_ret))?;
+                    let coerced = self.coerce_type(got, sig_ret, t.span)?;
+                    self.record_expr(t.span, coerced);
                 }
+                self.ret_stack.pop();
                 self.pop_scope();
                 Ok(fun_tid)
             }
@@ -637,41 +1032,183 @@ impl TypeChecker {
                 Ok(t)
             }
             ExprKind::Add(a, b) => {
+                if let Some(et) = expect {
+                    if et == T_BYTES {
+                        let ta = self.check_expr(a, Some(T_BYTES))?;
+                        let tb = self.check_expr(b, Some(T_BYTES))?;
+                        if ta != T_BYTES || tb != T_BYTES {
+                            return Err(CompileError::new(ErrorKind::Type, e.span, "'+' expects bytes operands"));
+                        }
+                        return Ok(T_BYTES);
+                    }
+                    if is_numeric(et) {
+                        let ta = self.check_expr(a, Some(et))?;
+                        let tb = self.check_expr(b, Some(et))?;
+                        if !is_numeric(ta) || !is_numeric(tb) {
+                            return Err(CompileError::new(
+                                ErrorKind::Type,
+                                e.span,
+                                "'+' expects numeric operands",
+                            ));
+                        }
+                        return Ok(et);
+                    }
+                }
+
                 let ta = self.check_expr(a, None)?;
-                let tb = self.check_expr(b, Some(ta)).or_else(|_| self.check_expr(b, None))?;
+                // If `ta` is Dynamic, avoid passing `expect=Dynamic` to `b`, since that can
+                // "downcast" a more precise type (e.g. Bytes/I32) back to Dynamic and break
+                // operator typing/coercions.
+                let tb = if ta == T_DYNAMIC {
+                    self.check_expr(b, None)?
+                } else {
+                    self.check_expr(b, Some(ta)).or_else(|_| self.check_expr(b, None))?
+                };
                 if ta == T_BYTES && tb == T_BYTES {
                     Ok(T_BYTES)
                 } else if is_numeric(ta) && is_numeric(tb) {
                     Ok(join_numeric(ta, tb))
+                } else if ta == T_DYNAMIC && tb == T_BYTES {
+                    let ta2 = self.check_expr(a, Some(T_BYTES))?;
+                    if ta2 == T_BYTES {
+                        Ok(T_BYTES)
+                    } else {
+                        Err(CompileError::new(ErrorKind::Type, e.span, "'+' expects bytes operands"))
+                    }
+                } else if tb == T_DYNAMIC && ta == T_BYTES {
+                    let tb2 = self.check_expr(b, Some(T_BYTES))?;
+                    if tb2 == T_BYTES {
+                        Ok(T_BYTES)
+                    } else {
+                        Err(CompileError::new(ErrorKind::Type, e.span, "'+' expects bytes operands"))
+                    }
+                } else if ta == T_DYNAMIC && is_numeric(tb) {
+                    let ta2 = self.check_expr(a, Some(tb))?;
+                    if is_numeric(ta2) {
+                        Ok(join_numeric(ta2, tb))
+                    } else {
+                        Err(CompileError::new(ErrorKind::Type, e.span, "'+' expects numeric operands"))
+                    }
+                } else if tb == T_DYNAMIC && is_numeric(ta) {
+                    let tb2 = self.check_expr(b, Some(ta))?;
+                    if is_numeric(tb2) {
+                        Ok(join_numeric(ta, tb2))
+                    } else {
+                        Err(CompileError::new(ErrorKind::Type, e.span, "'+' expects numeric operands"))
+                    }
                 } else {
                     Err(CompileError::new(ErrorKind::Type, e.span, "'+' expects bytes or numeric operands"))
                 }
             }
             ExprKind::Sub(a, b) | ExprKind::Mul(a, b) => {
+                if let Some(et) = expect {
+                    if is_numeric(et) {
+                        let ta = self.check_expr(a, Some(et))?;
+                        let tb = self.check_expr(b, Some(et))?;
+                        if !is_numeric(ta) || !is_numeric(tb) {
+                            return Err(CompileError::new(
+                                ErrorKind::Type,
+                                e.span,
+                                "numeric operator expects numeric operands",
+                            ));
+                        }
+                        return Ok(et);
+                    }
+                }
+
                 let ta = self.check_expr(a, None)?;
-                let tb = self.check_expr(b, Some(ta)).or_else(|_| self.check_expr(b, None))?;
+                let tb = if ta == T_DYNAMIC {
+                    self.check_expr(b, None)?
+                } else {
+                    self.check_expr(b, Some(ta)).or_else(|_| self.check_expr(b, None))?
+                };
                 if is_numeric(ta) && is_numeric(tb) {
                     Ok(join_numeric(ta, tb))
+                } else if ta == T_DYNAMIC && is_numeric(tb) {
+                    let ta2 = self.check_expr(a, Some(tb))?;
+                    if is_numeric(ta2) {
+                        Ok(join_numeric(ta2, tb))
+                    } else {
+                        Err(CompileError::new(
+                            ErrorKind::Type,
+                            e.span,
+                            "numeric operator expects numeric operands",
+                        ))
+                    }
+                } else if tb == T_DYNAMIC && is_numeric(ta) {
+                    let tb2 = self.check_expr(b, Some(ta))?;
+                    if is_numeric(tb2) {
+                        Ok(join_numeric(ta, tb2))
+                    } else {
+                        Err(CompileError::new(
+                            ErrorKind::Type,
+                            e.span,
+                            "numeric operator expects numeric operands",
+                        ))
+                    }
                 } else {
                     Err(CompileError::new(ErrorKind::Type, e.span, "numeric operator expects numeric operands"))
                 }
             }
             ExprKind::Div(a, b) => {
+                // If the surrounding context expects a float, push that expectation into both
+                // operands so Dynamic object properties can be typed/unboxed mechanically later.
+                if expect == Some(T_F64) {
+                    let ta = self.check_expr(a, Some(T_F64))?;
+                    let tb = self.check_expr(b, Some(T_F64))?;
+                    if !is_numeric(ta) || !is_numeric(tb) {
+                        return Err(CompileError::new(ErrorKind::Type, e.span, "'/' expects numeric operands"));
+                    }
+                    return Ok(T_F64);
+                }
+                if expect == Some(T_F32) {
+                    let ta = self.check_expr(a, Some(T_F32))?;
+                    let tb = self.check_expr(b, Some(T_F32))?;
+                    if !is_numeric(ta) || !is_numeric(tb) {
+                        return Err(CompileError::new(ErrorKind::Type, e.span, "'/' expects numeric operands"));
+                    }
+                    return Ok(T_F32);
+                }
+
                 let ta = self.check_expr(a, None)?;
                 let tb = self.check_expr(b, Some(ta)).or_else(|_| self.check_expr(b, None))?;
                 if !is_numeric(ta) || !is_numeric(tb) {
                     return Err(CompileError::new(ErrorKind::Type, e.span, "'/' expects numeric operands"));
                 }
                 // Division always produces a float.
-                Ok(if expect == Some(T_F64) || ta == T_F64 || tb == T_F64 {
+                Ok(if ta == T_F64 || tb == T_F64 {
                     T_F64
                 } else {
                     T_F32
                 })
             }
             ExprKind::Eq(a, b) | ExprKind::Ne(a, b) => {
-                let ta = self.check_expr(a, None)?;
-                let tb = self.check_expr(b, Some(ta)).or_else(|_| self.check_expr(b, None))?;
+                let mut ta = self.check_expr(a, None)?;
+                // Avoid pushing `expect=Dynamic` into the other operand: that would eagerly coerce
+                // concrete types (like I32 literals) into Dynamic, which then prevents the
+                // Dynamic→numeric pinning logic below from firing.
+                let mut tb = if ta == T_DYNAMIC {
+                    self.check_expr(b, None)?
+                } else {
+                    self.check_expr(b, Some(ta)).or_else(|_| self.check_expr(b, None))?
+                };
+
+                // If one side is Dynamic and the other is a concrete type, try to pin the Dynamic side
+                // to the concrete type so lowering can be mechanical (typed member unboxing, etc).
+                //
+                // Keep this conservative: do not try to "coerce" a Bool (Bool comparisons are special-cased below).
+                if ta == T_DYNAMIC && tb != T_DYNAMIC && tb != T_BOOL {
+                    let ta2 = self.check_expr(a, Some(tb))?;
+                    if ta2 == tb {
+                        ta = tb;
+                    }
+                } else if tb == T_DYNAMIC && ta != T_DYNAMIC && ta != T_BOOL {
+                    let tb2 = self.check_expr(b, Some(ta))?;
+                    if tb2 == ta {
+                        tb = ta;
+                    }
+                }
+
                 // Keep current semantics: allow bool comparisons against any type.
                 if ta == T_BOOL || tb == T_BOOL {
                     Ok(T_BOOL)
@@ -684,8 +1221,28 @@ impl TypeChecker {
                 }
             }
             ExprKind::Lt(a, b) | ExprKind::Le(a, b) | ExprKind::Gt(a, b) | ExprKind::Ge(a, b) => {
-                let ta = self.check_expr(a, None)?;
-                let tb = self.check_expr(b, Some(ta)).or_else(|_| self.check_expr(b, None))?;
+                let mut ta = self.check_expr(a, None)?;
+                // Same rule as equality: don't erase concrete types by pushing expect=Dynamic.
+                let mut tb = if ta == T_DYNAMIC {
+                    self.check_expr(b, None)?
+                } else {
+                    self.check_expr(b, Some(ta)).or_else(|_| self.check_expr(b, None))?
+                };
+
+                // If one side is Dynamic but the other is numeric, push the numeric expectation into
+                // the Dynamic side (eg. object property access) so lowering doesn't need heuristics.
+                if ta == T_DYNAMIC && is_numeric(tb) {
+                    let ta2 = self.check_expr(a, Some(tb))?;
+                    if is_numeric(ta2) {
+                        ta = ta2;
+                    }
+                } else if tb == T_DYNAMIC && is_numeric(ta) {
+                    let tb2 = self.check_expr(b, Some(ta))?;
+                    if is_numeric(tb2) {
+                        tb = tb2;
+                    }
+                }
+
                 if is_numeric(ta) && is_numeric(tb) {
                     Ok(T_BOOL)
                 } else {
@@ -693,18 +1250,14 @@ impl TypeChecker {
                 }
             }
             ExprKind::And(a, b) | ExprKind::Or(a, b) => {
-                let ta = self.check_expr(a, Some(T_BOOL))?;
-                let tb = self.check_expr(b, Some(T_BOOL))?;
-                if ta != T_BOOL || tb != T_BOOL {
-                    return Err(CompileError::new(ErrorKind::Type, e.span, "'&&'/'||' expects bool operands"));
-                }
+                // Jelly truthiness: operands need not be `Bool` (everything except `null` and
+                // `false` is truthy). Lowering will insert truthiness conversion if needed.
+                let _ = self.check_expr(a, None)?;
+                let _ = self.check_expr(b, None)?;
                 Ok(T_BOOL)
             }
             ExprKind::If { cond, then_br, else_br } => {
-                let tc = self.check_expr(cond, Some(T_BOOL))?;
-                if tc != T_BOOL {
-                    return Err(CompileError::new(ErrorKind::Type, cond.span, "if condition must be bool"));
-                }
+                let _ = self.check_expr(cond, None)?;
                 let tt = self.check_expr(then_br, expect)?;
                 let te = self.check_expr(else_br, Some(tt)).or_else(|_| self.check_expr(else_br, expect))?;
                 if tt != te {
@@ -735,10 +1288,13 @@ impl TypeChecker {
                 Ok(tb)
             }
             ExprKind::Match { subject, arms } => {
-                let _ = self.check_expr(subject, None)?;
+                let subj_tid = self.check_expr(subject, None)?;
                 let mut out_t: Option<TypeId> = None;
                 for a in arms {
-                    let t = self.check_arm(a, expect)?;
+                    let t = self.check_arm(a, subj_tid, expect)?;
+                    // Arms without a tail expression are "fallthrough" arms and do not
+                    // contribute a value to the match result.
+                    let Some(t) = t else { continue };
                     if let Some(prev) = out_t {
                         if t != prev {
                             return Err(CompileError::new(ErrorKind::Type, e.span, "match arms must have same type"));
@@ -750,18 +1306,48 @@ impl TypeChecker {
                 Ok(out_t.unwrap_or(expect.unwrap_or(T_DYNAMIC)))
             }
             ExprKind::New { proto, args } => {
-                let _ = self.check_expr(proto, Some(T_OBJECT))?;
+                let t_proto0 = self.check_expr(proto, None)?;
+                let t_proto = if t_proto0 == T_DYNAMIC {
+                    self.check_expr(proto, Some(T_OBJECT))?
+                } else {
+                    t_proto0
+                };
+                if !self.is_object_kind(t_proto) {
+                    return Err(CompileError::new(
+                        ErrorKind::Type,
+                        proto.span,
+                        "new expects an Object prototype",
+                    ));
+                }
                 for a in args {
                     let _ = self.check_expr(a, None)?;
                 }
-                Ok(T_OBJECT)
+                // Type of the allocated instance:
+                // - default: use the prototype's (possibly nominal) type
+                // - allow erasure to plain Object if context expects Object
+                // - otherwise, require the expected nominal type to match the prototype's nominal type
+                let self_tid = match expect {
+                    Some(et) if et == T_OBJECT => T_OBJECT,
+                    Some(et) if self.is_object_kind(et) => {
+                        if et != t_proto {
+                            return Err(CompileError::new(
+                                ErrorKind::Type,
+                                e.span,
+                                "new: expected object type does not match prototype type",
+                            ));
+                        }
+                        et
+                    }
+                    _ => t_proto,
+                };
+                Ok(self_tid)
             }
         }
     }
 
-    fn check_arm(&mut self, a: &MatchArm, expect: Option<TypeId>) -> Result<TypeId, CompileError> {
+    fn check_arm(&mut self, a: &MatchArm, subj_tid: TypeId, expect: Option<TypeId>) -> Result<Option<TypeId>, CompileError> {
         self.push_scope();
-        self.bind_pattern(&a.pat);
+        self.bind_pattern_typed(&a.pat, subj_tid);
         if let Some(w) = &a.when {
             let t = self.check_expr(w, Some(T_BOOL))?;
             if t != T_BOOL {
@@ -772,36 +1358,63 @@ impl TypeChecker {
             self.check_stmt(st)?;
         }
         let out_t = if let Some(t) = &a.tail {
-            self.check_expr(t, expect)?
+            Some(self.check_expr(t, expect)?)
         } else {
-            expect.unwrap_or(T_DYNAMIC)
+            None
         };
         self.pop_scope();
         Ok(out_t)
     }
 
-    fn bind_pattern(&mut self, p: &Pattern) {
+    fn bind_pattern_typed(&mut self, p: &Pattern, subj_tid: TypeId) {
         match &p.node {
-            PatternKind::Bind(n) => self.bind_local(n, T_DYNAMIC),
+            PatternKind::Bind(n) => self.bind_local(n, subj_tid),
             PatternKind::Obj(fields) => {
                 for (_k, v) in fields {
-                    self.bind_pattern(v);
+                    self.bind_pattern_typed(v, T_DYNAMIC);
                 }
             }
-            PatternKind::TupleExact(elems) | PatternKind::ArrayExact(elems) => {
+            PatternKind::TupleExact(elems) => {
+                let elem_tids: Vec<TypeId> = self
+                    .info
+                    .type_ctx
+                    .tuple_elems(subj_tid)
+                    .map(|ts| ts.to_vec())
+                    .unwrap_or_default();
+                for (i, el) in elems.iter().enumerate() {
+                    let tid = elem_tids.get(i).copied().unwrap_or(T_DYNAMIC);
+                    self.bind_pattern_typed(el, tid);
+                }
+            }
+            PatternKind::ArrayExact(elems) => {
+                let elem_tid = match subj_tid {
+                    T_ARRAY_I32 | T_LIST_I32 => Some(T_I32),
+                    T_ARRAY_BYTES | T_LIST_BYTES => Some(T_BYTES),
+                    _ => None,
+                };
                 for el in elems {
-                    self.bind_pattern(el);
+                    self.bind_pattern_typed(el, elem_tid.unwrap_or(T_DYNAMIC));
                 }
             }
             PatternKind::ArrayHeadTail { head, rest } => {
-                self.bind_pattern(head);
-                self.bind_local(rest, T_DYNAMIC);
+                let elem_tid = match subj_tid {
+                    T_ARRAY_I32 | T_LIST_I32 => Some(T_I32),
+                    T_ARRAY_BYTES | T_LIST_BYTES => Some(T_BYTES),
+                    _ => None,
+                };
+                self.bind_pattern_typed(head, elem_tid.unwrap_or(T_DYNAMIC));
+                self.bind_local(rest, subj_tid);
             }
             PatternKind::ArrayPrefixRest { prefix, rest } => {
+                let elem_tid = match subj_tid {
+                    T_ARRAY_I32 | T_LIST_I32 => Some(T_I32),
+                    T_ARRAY_BYTES | T_LIST_BYTES => Some(T_BYTES),
+                    _ => None,
+                };
                 for el in prefix {
-                    self.bind_pattern(el);
+                    self.bind_pattern_typed(el, elem_tid.unwrap_or(T_DYNAMIC));
                 }
-                self.bind_local(rest, T_DYNAMIC);
+                self.bind_local(rest, subj_tid);
             }
             PatternKind::Wildcard
             | PatternKind::BoolLit(_)

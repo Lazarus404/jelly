@@ -1,0 +1,38 @@
+ir {
+  funcs: 1
+  entry: 0
+  fn[0] module:__entry__ params=2 entry=b0
+    vregs:
+      v0: Object
+      v1: Object
+      v2: I32
+      v3: I32
+      v4: (I32, I32) -> I32
+      v5: I32
+      v6: I32
+      v7: I32
+      v8: I32
+      v9: Bool
+      v10: Bytes
+      v11: Bytes
+      v12: Bytes
+    b0 (entry):
+      @43..44 ConstI32 { dst: v2, imm: 1 }
+      @46..47 ConstI32 { dst: v3, imm: 2 }
+      @34..48 ObjGetAtom { dst: v4, obj: v1, atom: "add" }
+      @34..48 Mov { dst: v5, src: v2 }
+      @34..48 Mov { dst: v6, src: v3 }
+      @34..48 Call { dst: v7, callee: v4, sig_id: 0, arg_base: v5, nargs: 2 }
+      @59..60 ConstI32 { dst: v8, imm: 3 }
+      @54..60 EqI32 { dst: v9, a: v7, b: v8 }
+      term: JmpIf { cond: v9, then_tgt: b1, else_tgt: b2 }
+    b1 (if_then):
+      @64..68 ConstBytes { dst: v10, len: 2 }
+      term: Jmp { target: b3 }
+    b2 (if_else):
+      @78..83 ConstBytes { dst: v11, len: 3 }
+      term: Jmp { target: b3 }
+    b3 (if_join):
+      @50..85 Phi { dst: v12, incomings: [(b1, v10), (b2, v11)] }
+      term: Ret { value: v12 }
+}

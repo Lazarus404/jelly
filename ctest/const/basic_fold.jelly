@@ -1,0 +1,4 @@
+const x = 1 + 2 * 3;
+System.assert(x == 7);
+"ok"
+

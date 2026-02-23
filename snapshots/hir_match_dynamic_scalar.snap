@@ -1,0 +1,21 @@
+hir {
+  let o @0..17 : Object
+    ObjLit(1) : Object @8..16
+      field x:
+        I32Lit(1) : I32 @13..14
+  let d @18..30 : Dynamic
+    Member(.x) : Dynamic @26..29
+      Var(o) : Object @26..27
+  expr:
+    Match(arms=3) : Bytes @31..81
+      Var(d) : Dynamic @37..38
+      arm:
+        tail:
+          BytesLit : Bytes @47..53
+      arm:
+        tail:
+          BytesLit : Bytes @60..65
+      arm:
+        tail:
+          BytesLit : Bytes @72..79
+}

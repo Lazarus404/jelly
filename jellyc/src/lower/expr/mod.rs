@@ -31,7 +31,6 @@ mod call;
 mod builtins;
 mod control;
 mod fn_;
-pub(super) mod fn_infer;
 mod lit;
 mod r#match;
 mod new_;
@@ -39,6 +38,7 @@ mod new_;
 use crate::ast::{Expr, ExprKind, Span};
 use crate::error::{CompileError, ErrorKind};
 use crate::ir::{IrBuilder, IrOp, IrTerminator, TypeId, VRegId};
+use crate::hir::NodeId;
 
 use super::{
     ensure_capture_binding, intern_atom, is_object_kind, lookup_var, LowerCtx,
@@ -367,7 +367,7 @@ fn lower_tuple_eq(
 }
 
 // Lower the truthiness of a value.
-fn lower_truthy(
+pub(crate) fn lower_truthy(
     span: Span,
     v: VRegId,
     tid: TypeId,
@@ -450,16 +450,30 @@ fn lower_truthy(
 }
 
 pub fn lower_expr(e: &Expr, ctx: &mut LowerCtx, b: &mut IrBuilder) -> Result<(VRegId, TypeId), CompileError> {
-    lower_expr_expect(e, None, ctx, b)
+    lower_expr_expect(e, ctx, b)
 }
 
 pub(super) fn lower_expr_expect(
     e: &Expr,
-    expect: Option<TypeId>,
     ctx: &mut LowerCtx,
     b: &mut IrBuilder,
 ) -> Result<(VRegId, TypeId), CompileError> {
-    let res = lower_expr_expect_impl(e, expect, ctx, b)?;
+    // Semantic analysis is the source of truth for expression types.
+    // Lowering should never guess a type from a contextual `expect`.
+    let sem_t = ctx
+        .sem_expr_types
+        .get(&NodeId(e.span))
+        .copied()
+        .ok_or_else(|| CompileError::new(ErrorKind::Internal, e.span, "missing semantic type for expression"))?;
+    let res = lower_expr_expect_impl(e, Some(sem_t), ctx, b)?;
+    // If this fails, lowering made a type-directed decision that disagrees with semantic analysis.
+    if res.1 != sem_t {
+        return Err(CompileError::new(
+            ErrorKind::Internal,
+            e.span,
+            format!("lowering produced type {:?}, but semantic analysis says {:?}", res.1, sem_t),
+        ));
+    }
     Ok(res)
 }
 
@@ -550,6 +564,34 @@ fn lower_expr_expect_impl(
                     let v = b.new_vreg(T_I16);
                     b.emit(e.span, IrOp::ConstI32 { dst: v, imm: *x });
                     return Ok((v, T_I16));
+                }
+                if et == T_I64 {
+                    let v32 = b.new_vreg(T_I32);
+                    b.emit(e.span, IrOp::ConstI32 { dst: v32, imm: *x });
+                    let v64 = b.new_vreg(T_I64);
+                    b.emit(e.span, IrOp::SextI64 { dst: v64, src: v32 });
+                    return Ok((v64, T_I64));
+                }
+                if et == T_F16 {
+                    let v32 = b.new_vreg(T_I32);
+                    b.emit(e.span, IrOp::ConstI32 { dst: v32, imm: *x });
+                    let vf = b.new_vreg(T_F16);
+                    b.emit(e.span, IrOp::F16FromI32 { dst: vf, src: v32 });
+                    return Ok((vf, T_F16));
+                }
+                if et == T_F32 {
+                    let v32 = b.new_vreg(T_I32);
+                    b.emit(e.span, IrOp::ConstI32 { dst: v32, imm: *x });
+                    let vf = b.new_vreg(T_F32);
+                    b.emit(e.span, IrOp::F32FromI32 { dst: vf, src: v32 });
+                    return Ok((vf, T_F32));
+                }
+                if et == T_F64 {
+                    let v32 = b.new_vreg(T_I32);
+                    b.emit(e.span, IrOp::ConstI32 { dst: v32, imm: *x });
+                    let vf = b.new_vreg(T_F64);
+                    b.emit(e.span, IrOp::F64FromI32 { dst: vf, src: v32 });
+                    return Ok((vf, T_F64));
                 }
             }
             let v = b.new_vreg(T_I32);
@@ -709,11 +751,16 @@ fn lower_expr_expect_impl(
                     ns.as_str(),
                     "System" | "Bytes" | "Integer" | "Float" | "Atom" | "Object" | "Array" | "List"
                 ) {
-                    return Err(CompileError::new(
-                        ErrorKind::Type,
-                        e.span,
-                        "namespace members must be called (e.g. Bytes.len(x))",
-                    ));
+                    // Allow shadowing (e.g. `import foo as Bytes`), where `Bytes` is a normal binding.
+                    let shadowed = ctx.env_stack.iter().rev().any(|m| m.contains_key(ns))
+                        || ctx.module_alias_exports.contains_key(ns);
+                    if !shadowed {
+                        return Err(CompileError::new(
+                            ErrorKind::Type,
+                            e.span,
+                            "namespace members must be called (e.g. Bytes.len(x))",
+                        ));
+                    }
                 }
             }
 
@@ -736,7 +783,22 @@ fn lower_expr_expect_impl(
             // If this is a module namespace object, prefer the module's declared export type.
             if let ExprKind::Var(alias) = &base.node {
                 if let Some(exports) = ctx.module_alias_exports.get(alias) {
-                    let out_tid = exports.get(name).copied().or(expect).unwrap_or(T_DYNAMIC);
+                    let out_tid = expect.ok_or_else(|| {
+                        CompileError::new(
+                            ErrorKind::Internal,
+                            e.span,
+                            "missing semantic type for module member access",
+                        )
+                    })?;
+                    if let Some(exp_tid) = exports.get(name).copied() {
+                        if exp_tid != out_tid && out_tid != T_DYNAMIC {
+                            return Err(CompileError::new(
+                                ErrorKind::Internal,
+                                e.span,
+                                "semantic type mismatch for module export member access",
+                            ));
+                        }
+                    }
                     let out = b.new_vreg(out_tid);
                     b.emit(e.span, IrOp::ObjGetAtom { dst: out, obj: v_obj, atom_id });
                     if let Some(et) = expect {
@@ -834,12 +896,27 @@ fn lower_expr_expect_impl(
                 // Object property access always yields Dynamic (boxed); convert if expect is typed.
                 // Emit ObjGetAtom directly to typed dst when possible to avoid tmp+FromDyn* reg-alloc
                 // issues (VM's vm_store_from_boxed unboxes based on reg_types[dst]).
-                let out_tid = expect.unwrap_or(T_DYNAMIC);
+                let out_tid = expect.ok_or_else(|| {
+                    CompileError::new(
+                        ErrorKind::Internal,
+                        e.span,
+                        "missing semantic type for object property access",
+                    )
+                })?;
                 if out_tid == T_DYNAMIC {
                     let tmp = b.new_vreg(T_DYNAMIC);
                     b.emit(e.span, IrOp::ObjGetAtom { dst: tmp, obj: v_obj, atom_id });
                     Ok((tmp, T_DYNAMIC))
-                } else if is_numeric(out_tid) || out_tid == T_BOOL || out_tid == T_BYTES || out_tid == T_OBJECT || out_tid == T_ARRAY_I32 || out_tid == T_ARRAY_BYTES {
+                } else if is_numeric(out_tid)
+                    || out_tid == T_BOOL
+                    || out_tid == T_BYTES
+                    || out_tid == T_OBJECT
+                    || out_tid == T_ARRAY_I32
+                    || out_tid == T_ARRAY_BYTES
+                    || out_tid == T_LIST_I32
+                    || out_tid == T_LIST_BYTES
+                    || is_object_kind(&ctx.type_ctx, out_tid)
+                {
                     let out = b.new_vreg(out_tid);
                     b.emit(e.span, IrOp::ObjGetAtom { dst: out, obj: v_obj, atom_id });
                     Ok((out, out_tid))
@@ -848,10 +925,23 @@ fn lower_expr_expect_impl(
                 }
             }
         }
-        ExprKind::ArrayLit(elems) => lit::lower_array_lit(e, elems, expect, ctx, b),
+        ExprKind::ArrayLit(elems) => lit::lower_array_lit(e, elems, ctx, b),
         ExprKind::TupleLit(elems) => lit::lower_tuple_lit(e, elems, ctx, b),
         ExprKind::ObjLit(fields) => {
-            let out_tid = expect.filter(|&et| is_object_kind(&ctx.type_ctx, et)).unwrap_or(T_OBJECT);
+            let out_tid = expect.ok_or_else(|| {
+                CompileError::new(
+                    ErrorKind::Internal,
+                    e.span,
+                    "missing semantic type for object literal",
+                )
+            })?;
+            if out_tid != T_OBJECT && !is_object_kind(&ctx.type_ctx, out_tid) {
+                return Err(CompileError::new(
+                    ErrorKind::Internal,
+                    e.span,
+                    "object literal has non-object semantic type",
+                ));
+            }
             let out = b.new_vreg(out_tid);
             b.emit(e.span, IrOp::ObjNew { dst: out });
             for (k, ve) in fields {
@@ -875,7 +965,13 @@ fn lower_expr_expect_impl(
                 T_I32 => (vi_raw, T_I32),
                 // Allow any integer index type (and Dynamic via unboxing), but the VM op expects I32.
                 T_I8 | T_I16 | T_I64 => (coerce_numeric(index.span, vi_raw, ti_raw, T_I32, b)?, T_I32),
-                T_DYNAMIC => (lower_expr_expect(index, Some(T_I32), ctx, b)?.0, T_I32),
+                T_DYNAMIC => {
+                    return Err(CompileError::new(
+                        ErrorKind::Internal,
+                        index.span,
+                        "index expression should have been coerced to I32 by semantic analysis",
+                    ))
+                }
                 _ => {
                     return Err(CompileError::new(
                         ErrorKind::Type,
@@ -925,12 +1021,12 @@ fn lower_expr_expect_impl(
                 let (va, ta, vb, tb) = match (&terms[0].node, &terms[1].node) {
                     (ExprKind::Member { .. }, _) => {
                         let (vb, tb) = lower_expr(terms[1], ctx, b)?;
-                        let (va, ta) = lower_expr_expect(terms[0], Some(tb), ctx, b)?;
+                        let (va, ta) = lower_expr_expect(terms[0], ctx, b)?;
                         (va, ta, vb, tb)
                     }
                     (_, ExprKind::Member { .. }) => {
                         let (va, ta) = lower_expr(terms[0], ctx, b)?;
-                        let (vb, tb) = lower_expr_expect(terms[1], Some(ta), ctx, b)?;
+                        let (vb, tb) = lower_expr_expect(terms[1], ctx, b)?;
                         (va, ta, vb, tb)
                     }
                     _ => {
@@ -981,169 +1077,107 @@ fn lower_expr_expect_impl(
                 ));
             }
 
-            // Compile terms left-to-right, but allow member gets to be typed by a previously
-            // inferred add-chain type (so `o.s + x` can treat `o.s` as bytes/i32).
-            let mut compiled_opt: Vec<Option<(VRegId, TypeId)>> = vec![None; terms.len()];
-            let mut deferred_member_idxs: Vec<usize> = Vec::new();
-            let mut t0: Option<TypeId> = None;
-            for (i, t) in terms.iter().enumerate() {
-                if matches!(t.node, ExprKind::Member { .. }) {
-                    deferred_member_idxs.push(i);
-                    continue;
-                }
-                let (v, tt) = lower_expr(t, ctx, b)?;
-                if let Some(t0v) = t0 {
-                    if tt != t0v {
-                        return Err(CompileError::new(
-                            ErrorKind::Type,
-                            e.span,
-                            "'+' expects operands of same type",
-                        ));
-                    }
-                } else {
-                    t0 = Some(tt);
-                }
-                compiled_opt[i] = Some((v, tt));
-            }
-            let t0 = t0.or(expect).ok_or_else(|| {
+            // Lower a flattened add chain mechanically from the semantic result type.
+            let out_t = expect.ok_or_else(|| {
                 CompileError::new(
-                    ErrorKind::Type,
+                    ErrorKind::Internal,
                     e.span,
-                    "cannot infer '+' operand type (needs a non-member term or type context)",
+                    "missing semantic type for '+' expression",
                 )
             })?;
-            for i in deferred_member_idxs {
-                let (v, tt) = lower_expr_expect(terms[i], Some(t0), ctx, b)?;
-                if tt != t0 {
-                    return Err(CompileError::new(ErrorKind::Type, terms[i].span, "member type mismatch"));
+
+            if out_t == T_BYTES {
+                // Build Array<bytes> and concat_many.
+                let mut parts: Vec<VRegId> = Vec::with_capacity(terms.len());
+                for t in &terms {
+                    let (v, tt) = lower_expr(t, ctx, b)?;
+                    if tt != T_BYTES {
+                        return Err(CompileError::new(
+                            ErrorKind::Type,
+                            t.span,
+                            "'+' expects bytes operands",
+                        ));
+                    }
+                    parts.push(v);
                 }
-                compiled_opt[i] = Some((v, tt));
+
+                let n = parts.len() as i32;
+                let v_n = b.new_vreg(T_I32);
+                b.emit(e.span, IrOp::ConstI32 { dst: v_n, imm: n });
+
+                let v_arr = b.new_vreg(T_ARRAY_BYTES);
+                b.emit(e.span, IrOp::ArrayNew { dst: v_arr, len: v_n });
+
+                for (i, v_part) in parts.iter().enumerate() {
+                    let v_i = b.new_vreg(T_I32);
+                    b.emit(e.span, IrOp::ConstI32 { dst: v_i, imm: i as i32 });
+                    b.emit(e.span, IrOp::ArraySet { arr: v_arr, index: v_i, value: *v_part });
+                }
+
+                let out = b.new_vreg(T_BYTES);
+                b.emit(e.span, IrOp::BytesConcatMany { dst: out, parts: v_arr });
+                return Ok((out, T_BYTES));
             }
-            let compiled: Vec<(VRegId, TypeId)> = compiled_opt
-                .into_iter()
-                .map(|x| x.expect("compiled term"))
-                .collect();
 
-            match t0 {
-                T_BYTES => {
-                    // Build Array<bytes> and concat_many.
-                    let n = compiled.len() as i32;
-                    let v_n = b.new_vreg(T_I32);
-                    b.emit(e.span, IrOp::ConstI32 { dst: v_n, imm: n });
+            if is_numeric(out_t) {
+                // Promote each term to the semantic result type, then fold left-to-right.
+                let mut vs: Vec<VRegId> = Vec::with_capacity(terms.len());
+                for t in &terms {
+                    let (v, tt) = lower_expr(t, ctx, b)?;
+                    if !is_numeric(tt) {
+                        return Err(CompileError::new(
+                            ErrorKind::Type,
+                            t.span,
+                            "'+' expects numeric operands",
+                        ));
+                    }
+                    vs.push(coerce_numeric(e.span, v, tt, out_t, b)?);
+                }
 
-                    let v_arr = b.new_vreg(T_ARRAY_BYTES);
-                    b.emit(e.span, IrOp::ArrayNew { dst: v_arr, len: v_n });
-
-                    for (i, (v_part, _)) in compiled.iter().enumerate() {
-                        let v_i = b.new_vreg(T_I32);
-                        b.emit(e.span, IrOp::ConstI32 { dst: v_i, imm: i as i32 });
-                        b.emit(e.span, IrOp::ArraySet { arr: v_arr, index: v_i, value: *v_part });
+                let mut acc = vs[0];
+                for rhs in &vs[1..] {
+                    let out = b.new_vreg(out_t);
+                    match out_t {
+                        T_I8 | T_I16 | T_I32 => b.emit(e.span, IrOp::AddI32 { dst: out, a: acc, b: *rhs }),
+                        T_I64 => b.emit(e.span, IrOp::AddI64 { dst: out, a: acc, b: *rhs }),
+                        T_F16 => b.emit(e.span, IrOp::AddF16 { dst: out, a: acc, b: *rhs }),
+                        T_F32 => b.emit(e.span, IrOp::AddF32 { dst: out, a: acc, b: *rhs }),
+                        T_F64 => b.emit(e.span, IrOp::AddF64 { dst: out, a: acc, b: *rhs }),
+                        _ => return Err(CompileError::new(ErrorKind::Internal, e.span, "bad numeric add type")),
                     }
-
-                    let out = b.new_vreg(T_BYTES);
-                    b.emit(e.span, IrOp::BytesConcatMany { dst: out, parts: v_arr });
-                    Ok((out, T_BYTES))
+                    acc = out;
                 }
-                T_I8 | T_I16 | T_I32 => {
-                    // Fold i32 addition left-to-right; coerce I8/I16 to I32.
-                    let mut acc = coerce_numeric(e.span, compiled[0].0, t0, T_I32, b)?;
-                    for (rhs, _) in &compiled[1..] {
-                        let rhs_i32 = coerce_numeric(e.span, *rhs, t0, T_I32, b)?;
-                        let out = b.new_vreg(T_I32);
-                        b.emit(e.span, IrOp::AddI32 { dst: out, a: acc, b: rhs_i32 });
-                        acc = out;
-                    }
-                    Ok((acc, T_I32))
-                }
-                T_I64 => {
-                    let mut acc = compiled[0].0;
-                    for (rhs, _) in &compiled[1..] {
-                        let out = b.new_vreg(T_I64);
-                        b.emit(e.span, IrOp::AddI64 { dst: out, a: acc, b: *rhs });
-                        acc = out;
-                    }
-                    Ok((acc, T_I64))
-                }
-                T_F16 => {
-                    let mut acc = compiled[0].0;
-                    for (rhs, _) in &compiled[1..] {
-                        let out = b.new_vreg(T_F16);
-                        b.emit(e.span, IrOp::AddF16 { dst: out, a: acc, b: *rhs });
-                        acc = out;
-                    }
-                    Ok((acc, T_F16))
-                }
-                T_F32 => {
-                    let mut acc = compiled[0].0;
-                    for (rhs, _) in &compiled[1..] {
-                        let out = b.new_vreg(T_F32);
-                        b.emit(e.span, IrOp::AddF32 { dst: out, a: acc, b: *rhs });
-                        acc = out;
-                    }
-                    Ok((acc, T_F32))
-                }
-                T_F64 => {
-                    let mut acc = compiled[0].0;
-                    for (rhs, _) in &compiled[1..] {
-                        let out = b.new_vreg(T_F64);
-                        b.emit(e.span, IrOp::AddF64 { dst: out, a: acc, b: *rhs });
-                        acc = out;
-                    }
-                    Ok((acc, T_F64))
-                }
-                _ => Err(CompileError::new(ErrorKind::Type, e.span, "'+' not supported for this type yet")),
+                return Ok((acc, out_t));
             }
+
+            Err(CompileError::new(
+                ErrorKind::Type,
+                e.span,
+                "'+' not supported for this type yet",
+            ))
         }
         ExprKind::Sub(a, bb) => {
-            let (va, ta, vb, tb) = if let Some(et) = expect {
-                if is_numeric(et) {
-                    let (va, ta) = lower_expr_expect(a, Some(et), ctx, b)?;
-                    let (vb, tb) = lower_expr_expect(bb, Some(et), ctx, b)?;
-                    (va, ta, vb, tb)
-                } else {
-                    let (va, ta) = lower_expr(a, ctx, b)?;
-                    let (vb, tb) = lower_expr(bb, ctx, b)?;
-                    (va, ta, vb, tb)
-                }
-            } else {
-                match (&a.node, &bb.node) {
-                    (ExprKind::Member { .. }, ExprKind::Member { .. }) => {
-                        let et = expect.filter(|&t| is_numeric(t)).unwrap_or(T_F64);
-                        let (va, ta) = lower_expr_expect(a, Some(et), ctx, b)?;
-                        let (vb, tb) = lower_expr_expect(bb, Some(et), ctx, b)?;
-                        (va, ta, vb, tb)
-                    }
-                    (ExprKind::Member { .. }, _) => {
-                        let (vb, tb) = lower_expr(bb, ctx, b)?;
-                        if is_numeric(tb) {
-                            let (va, ta) = lower_expr_expect(a, Some(tb), ctx, b)?;
-                            (va, ta, vb, tb)
-                        } else {
-                            let (va, ta) = lower_expr(a, ctx, b)?;
-                            (va, ta, vb, tb)
-                        }
-                    }
-                    (_, ExprKind::Member { .. }) => {
-                        let (va, ta) = lower_expr(a, ctx, b)?;
-                        if is_numeric(ta) {
-                            let (vb, tb) = lower_expr_expect(bb, Some(ta), ctx, b)?;
-                            (va, ta, vb, tb)
-                        } else {
-                            let (vb, tb) = lower_expr(bb, ctx, b)?;
-                            (va, ta, vb, tb)
-                        }
-                    }
-                    _ => {
-                        let (va, ta) = lower_expr(a, ctx, b)?;
-                        let (vb, tb) = lower_expr(bb, ctx, b)?;
-                        (va, ta, vb, tb)
-                    }
-                }
-            };
+            let out_t = expect.ok_or_else(|| {
+                CompileError::new(
+                    ErrorKind::Internal,
+                    e.span,
+                    "missing semantic type for '-' expression",
+                )
+            })?;
+            if !is_numeric(out_t) {
+                return Err(CompileError::new(
+                    ErrorKind::Internal,
+                    e.span,
+                    "semantic type for '-' is not numeric",
+                ));
+            }
+            let (va, ta) = lower_expr(a, ctx, b)?;
+            let (vb, tb) = lower_expr(bb, ctx, b)?;
             if !is_numeric(ta) || !is_numeric(tb) {
                 return Err(CompileError::new(ErrorKind::Type, e.span, "'-' expects numeric operands"));
             }
-            let (va2, _ta2, vb2, _tb2, out_t) = promote_numeric_bin(e.span, va, ta, vb, tb, "-", expect, b)?;
+            let va2 = coerce_numeric(e.span, va, ta, out_t, b)?;
+            let vb2 = coerce_numeric(e.span, vb, tb, out_t, b)?;
             let out = b.new_vreg(out_t);
             match out_t {
                 T_I8 | T_I16 | T_I32 => b.emit(e.span, IrOp::SubI32 { dst: out, a: va2, b: vb2 }),
@@ -1151,60 +1185,32 @@ fn lower_expr_expect_impl(
                 T_F16 => b.emit(e.span, IrOp::SubF16 { dst: out, a: va2, b: vb2 }),
                 T_F32 => b.emit(e.span, IrOp::SubF32 { dst: out, a: va2, b: vb2 }),
                 T_F64 => b.emit(e.span, IrOp::SubF64 { dst: out, a: va2, b: vb2 }),
-                _ => return Err(CompileError::new(ErrorKind::Internal, e.span, "bad numeric promotion")),
+                _ => return Err(CompileError::new(ErrorKind::Internal, e.span, "bad numeric sub type")),
             }
             Ok((out, out_t))
         }
         ExprKind::Mul(a, bb) => {
-            let (va, ta, vb, tb) = if let Some(et) = expect {
-                if is_numeric(et) {
-                    let (va, ta) = lower_expr_expect(a, Some(et), ctx, b)?;
-                    let (vb, tb) = lower_expr_expect(bb, Some(et), ctx, b)?;
-                    (va, ta, vb, tb)
-                } else {
-                    let (va, ta) = lower_expr(a, ctx, b)?;
-                    let (vb, tb) = lower_expr(bb, ctx, b)?;
-                    (va, ta, vb, tb)
-                }
-            } else {
-                match (&a.node, &bb.node) {
-                    (ExprKind::Member { .. }, ExprKind::Member { .. }) => {
-                        let et = expect.filter(|&t| is_numeric(t)).unwrap_or(T_F64);
-                        let (va, ta) = lower_expr_expect(a, Some(et), ctx, b)?;
-                        let (vb, tb) = lower_expr_expect(bb, Some(et), ctx, b)?;
-                        (va, ta, vb, tb)
-                    }
-                    (ExprKind::Member { .. }, _) => {
-                        let (vb, tb) = lower_expr(bb, ctx, b)?;
-                        if is_numeric(tb) {
-                            let (va, ta) = lower_expr_expect(a, Some(tb), ctx, b)?;
-                            (va, ta, vb, tb)
-                        } else {
-                            let (va, ta) = lower_expr(a, ctx, b)?;
-                            (va, ta, vb, tb)
-                        }
-                    }
-                    (_, ExprKind::Member { .. }) => {
-                        let (va, ta) = lower_expr(a, ctx, b)?;
-                        if is_numeric(ta) {
-                            let (vb, tb) = lower_expr_expect(bb, Some(ta), ctx, b)?;
-                            (va, ta, vb, tb)
-                        } else {
-                            let (vb, tb) = lower_expr(bb, ctx, b)?;
-                            (va, ta, vb, tb)
-                        }
-                    }
-                    _ => {
-                        let (va, ta) = lower_expr(a, ctx, b)?;
-                        let (vb, tb) = lower_expr(bb, ctx, b)?;
-                        (va, ta, vb, tb)
-                    }
-                }
-            };
+            let out_t = expect.ok_or_else(|| {
+                CompileError::new(
+                    ErrorKind::Internal,
+                    e.span,
+                    "missing semantic type for '*' expression",
+                )
+            })?;
+            if !is_numeric(out_t) {
+                return Err(CompileError::new(
+                    ErrorKind::Internal,
+                    e.span,
+                    "semantic type for '*' is not numeric",
+                ));
+            }
+            let (va, ta) = lower_expr(a, ctx, b)?;
+            let (vb, tb) = lower_expr(bb, ctx, b)?;
             if !is_numeric(ta) || !is_numeric(tb) {
                 return Err(CompileError::new(ErrorKind::Type, e.span, "'*' expects numeric operands"));
             }
-            let (va2, _ta2, vb2, _tb2, out_t) = promote_numeric_bin(e.span, va, ta, vb, tb, "*", expect, b)?;
+            let va2 = coerce_numeric(e.span, va, ta, out_t, b)?;
+            let vb2 = coerce_numeric(e.span, vb, tb, out_t, b)?;
             let out = b.new_vreg(out_t);
             match out_t {
                 T_I8 | T_I16 | T_I32 => b.emit(e.span, IrOp::MulI32 { dst: out, a: va2, b: vb2 }),
@@ -1212,61 +1218,33 @@ fn lower_expr_expect_impl(
                 T_F16 => b.emit(e.span, IrOp::MulF16 { dst: out, a: va2, b: vb2 }),
                 T_F32 => b.emit(e.span, IrOp::MulF32 { dst: out, a: va2, b: vb2 }),
                 T_F64 => b.emit(e.span, IrOp::MulF64 { dst: out, a: va2, b: vb2 }),
-                _ => return Err(CompileError::new(ErrorKind::Internal, e.span, "bad numeric promotion")),
+                _ => return Err(CompileError::new(ErrorKind::Internal, e.span, "bad numeric mul type")),
             }
             Ok((out, out_t))
         }
         ExprKind::Div(a, bb) => {
-            let (va, ta, vb, tb) = if let Some(et) = expect {
-                if is_numeric(et) {
-                    let (va, ta) = lower_expr_expect(a, Some(et), ctx, b)?;
-                    let (vb, tb) = lower_expr_expect(bb, Some(et), ctx, b)?;
-                    (va, ta, vb, tb)
-                } else {
-                    let (va, ta) = lower_expr(a, ctx, b)?;
-                    let (vb, tb) = lower_expr(bb, ctx, b)?;
-                    (va, ta, vb, tb)
-                }
-            } else {
-                match (&a.node, &bb.node) {
-                    (ExprKind::Member { .. }, ExprKind::Member { .. }) => {
-                        let et = expect.filter(|&t| is_numeric(t)).unwrap_or(T_F64);
-                        let (va, ta) = lower_expr_expect(a, Some(et), ctx, b)?;
-                        let (vb, tb) = lower_expr_expect(bb, Some(et), ctx, b)?;
-                        (va, ta, vb, tb)
-                    }
-                    (ExprKind::Member { .. }, _) => {
-                        let (vb, tb) = lower_expr(bb, ctx, b)?;
-                        if is_numeric(tb) {
-                            let (va, ta) = lower_expr_expect(a, Some(tb), ctx, b)?;
-                            (va, ta, vb, tb)
-                        } else {
-                            let (va, ta) = lower_expr(a, ctx, b)?;
-                            (va, ta, vb, tb)
-                        }
-                    }
-                    (_, ExprKind::Member { .. }) => {
-                        let (va, ta) = lower_expr(a, ctx, b)?;
-                        if is_numeric(ta) {
-                            let (vb, tb) = lower_expr_expect(bb, Some(ta), ctx, b)?;
-                            (va, ta, vb, tb)
-                        } else {
-                            let (vb, tb) = lower_expr(bb, ctx, b)?;
-                            (va, ta, vb, tb)
-                        }
-                    }
-                    _ => {
-                        let (va, ta) = lower_expr(a, ctx, b)?;
-                        let (vb, tb) = lower_expr(bb, ctx, b)?;
-                        (va, ta, vb, tb)
-                    }
-                }
-            };
+            let out_t = expect.ok_or_else(|| {
+                CompileError::new(
+                    ErrorKind::Internal,
+                    e.span,
+                    "missing semantic type for '/' expression",
+                )
+            })?;
+            if !is_numeric(out_t) {
+                return Err(CompileError::new(
+                    ErrorKind::Internal,
+                    e.span,
+                    "semantic type for '/' is not numeric",
+                ));
+            }
+            let (va, ta) = lower_expr(a, ctx, b)?;
+            let (vb, tb) = lower_expr(bb, ctx, b)?;
             if !is_numeric(ta) || !is_numeric(tb) {
                 return Err(CompileError::new(ErrorKind::Type, e.span, "'/' expects numeric operands"));
             }
-            // Division always produces a float.
-            let (va2, _ta2, vb2, _tb2, out_t) = promote_numeric_bin(e.span, va, ta, vb, tb, "/", expect, b)?;
+            // Semantic analysis is the source of truth for the division result type (currently F32/F64).
+            let va2 = coerce_numeric(e.span, va, ta, out_t, b)?;
+            let vb2 = coerce_numeric(e.span, vb, tb, out_t, b)?;
             let out = b.new_vreg(out_t);
             match out_t {
                 T_F32 => b.emit(e.span, IrOp::DivF32 { dst: out, a: va2, b: vb2 }),
@@ -1313,24 +1291,8 @@ fn lower_expr_expect_impl(
             Ok((out, T_BOOL))
         }
         ExprKind::Eq(a, bb) => {
-            // If one side is a member access, allow it to take its type from the other side.
-            let (va, ta, vb, tb) = match (&a.node, &bb.node) {
-                (ExprKind::Member { .. }, _) => {
-                    let (vb, tb) = lower_expr(bb, ctx, b)?;
-                    let (va, ta) = lower_expr_expect(a, Some(tb), ctx, b)?;
-                    (va, ta, vb, tb)
-                }
-                (_, ExprKind::Member { .. }) => {
-                    let (va, ta) = lower_expr(a, ctx, b)?;
-                    let (vb, tb) = lower_expr_expect(bb, Some(ta), ctx, b)?;
-                    (va, ta, vb, tb)
-                }
-                _ => {
-                    let (va, ta) = lower_expr(a, ctx, b)?;
-                    let (vb, tb) = lower_expr(bb, ctx, b)?;
-                    (va, ta, vb, tb)
-                }
-            };
+            let (va, ta) = lower_expr(a, ctx, b)?;
+            let (vb, tb) = lower_expr(bb, ctx, b)?;
             let (va, ta, vb, tb) = if ta != tb && is_numeric(ta) && is_numeric(tb) {
                 let (va2, _ta2, vb2, _tb2, out_t) = promote_numeric_bin(e.span, va, ta, vb, tb, "==", None, b)?;
                 (va2, out_t, vb2, out_t)
@@ -1423,23 +1385,8 @@ fn lower_expr_expect_impl(
             Ok((out, T_BOOL))
         }
         ExprKind::Lt(a, bb) => {
-            let (va, ta, vb, tb) = match (&a.node, &bb.node) {
-                (ExprKind::Member { .. }, _) => {
-                    let (vb, tb) = lower_expr(bb, ctx, b)?;
-                    let (va, ta) = lower_expr_expect(a, Some(tb), ctx, b)?;
-                    (va, ta, vb, tb)
-                }
-                (_, ExprKind::Member { .. }) => {
-                    let (va, ta) = lower_expr(a, ctx, b)?;
-                    let (vb, tb) = lower_expr_expect(bb, Some(ta), ctx, b)?;
-                    (va, ta, vb, tb)
-                }
-                _ => {
-                    let (va, ta) = lower_expr(a, ctx, b)?;
-                    let (vb, tb) = lower_expr(bb, ctx, b)?;
-                    (va, ta, vb, tb)
-                }
-            };
+            let (va, ta) = lower_expr(a, ctx, b)?;
+            let (vb, tb) = lower_expr(bb, ctx, b)?;
             if !is_numeric(ta) || !is_numeric(tb) {
                 return Err(CompileError::new(ErrorKind::Type, e.span, "'<' expects numeric operands"));
             }
@@ -1500,10 +1447,12 @@ fn lower_expr_expect_impl(
         }
         ExprKind::And(a, bb) => {
             // Short-circuit: if(!a) res=a(false) else res=b
-            let (va, ta) = lower_expr(a, ctx, b)?;
-            if ta != T_BOOL {
-                return Err(CompileError::new(ErrorKind::Type, e.span, "'&&' expects bool operands"));
-            }
+            let (va0, ta0) = lower_expr(a, ctx, b)?;
+            let va = if ta0 == T_BOOL {
+                va0
+            } else {
+                lower_truthy(e.span, va0, ta0, ctx, b)?
+            };
 
             let rhs_b = b.new_block(Some("and_rhs".to_string()));
             let short_b = b.new_block(Some("and_short".to_string()));
@@ -1519,10 +1468,12 @@ fn lower_expr_expect_impl(
             b.term(IrTerminator::Jmp { target: join_b });
 
             b.set_block(rhs_b);
-            let (vb, tb) = lower_expr(bb, ctx, b)?;
-            if tb != T_BOOL {
-                return Err(CompileError::new(ErrorKind::Type, e.span, "'&&' expects bool operands"));
-            }
+            let (vb0, tb0) = lower_expr(bb, ctx, b)?;
+            let vb = if tb0 == T_BOOL {
+                vb0
+            } else {
+                lower_truthy(e.span, vb0, tb0, ctx, b)?
+            };
             let rhs_end = b.cur_block();
             b.term(IrTerminator::Jmp { target: join_b });
 
@@ -1540,10 +1491,12 @@ fn lower_expr_expect_impl(
         ExprKind::Or(a, bb) => {
             // Short-circuit:
             //   if(a) res=a(true) else res=b
-            let (va, ta) = lower_expr(a, ctx, b)?;
-            if ta != T_BOOL {
-                return Err(CompileError::new(ErrorKind::Type, e.span, "'||' expects bool operands"));
-            }
+            let (va0, ta0) = lower_expr(a, ctx, b)?;
+            let va = if ta0 == T_BOOL {
+                va0
+            } else {
+                lower_truthy(e.span, va0, ta0, ctx, b)?
+            };
 
             let short_b = b.new_block(Some("or_short".to_string()));
             let rhs_b = b.new_block(Some("or_rhs".to_string()));
@@ -1559,10 +1512,12 @@ fn lower_expr_expect_impl(
             b.term(IrTerminator::Jmp { target: join_b });
 
             b.set_block(rhs_b);
-            let (vb, tb) = lower_expr(bb, ctx, b)?;
-            if tb != T_BOOL {
-                return Err(CompileError::new(ErrorKind::Type, e.span, "'||' expects bool operands"));
-            }
+            let (vb0, tb0) = lower_expr(bb, ctx, b)?;
+            let vb = if tb0 == T_BOOL {
+                vb0
+            } else {
+                lower_truthy(e.span, vb0, tb0, ctx, b)?
+            };
             let rhs_end = b.cur_block();
             b.term(IrTerminator::Jmp { target: join_b });
 
@@ -1583,19 +1538,19 @@ fn lower_expr_expect_impl(
             "unexpected type application (templates must be expanded before lowering)",
         )),
         ExprKind::Call { callee, type_args, args } => {
-            return call::lower_call_expr(e, callee, type_args, args, expect, ctx, b);
+            return call::lower_call_expr(e, callee, type_args, args, ctx, b);
         }
         ExprKind::Block { stmts, expr } => control::lower_block_expr(stmts, expr, ctx, b),
         ExprKind::If { cond, then_br, else_br } => control::lower_if_expr(e, cond, then_br, else_br, ctx, b),
         ExprKind::Try { body, catch_name, catch_body } => {
             control::lower_try_expr(e, body, catch_name, catch_body, ctx, b)
         }
-        ExprKind::Match { subject, arms } => return r#match::lower_match_expr(e, subject, arms, expect, ctx, b),
+        ExprKind::Match { subject, arms } => return r#match::lower_match_expr(e, subject, arms, ctx, b),
         ExprKind::New { proto, args } => {
-            return new_::lower_new_expr(e, proto, args, expect, ctx, b);
+            return new_::lower_new_expr(e, proto, args, ctx, b);
         }
         ExprKind::Fn { params, body, tail } => {
-            return fn_::lower_fn_expr(e, params, body, tail, expect, ctx, b);
+            return fn_::lower_fn_expr(e, params, body, tail, ctx, b);
         }
         _ => Err(CompileError::new(
             ErrorKind::Codegen,

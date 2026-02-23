@@ -1,0 +1,50 @@
+ir {
+  funcs: 1
+  entry: 0
+  fn[0] main params=0 entry=b0
+    vregs:
+      v0: Object
+      v1: I32
+      v2: Bytes
+      v3: I32
+      v4: Bool
+      v5: Bytes
+      v6: I32
+      v7: Bool
+      v8: Bytes
+      v9: Bytes
+    b0 (entry):
+      @0..0 ObjNew { dst: v0 }
+      @13..14 ConstI32 { dst: v1, imm: 1 }
+      term: Jmp { target: b1 }
+    b1 (match_check0):
+      @27..28 ConstI32 { dst: v3, imm: 0 }
+      @27..28 EqI32 { dst: v4, a: v1, b: v3 }
+      term: JmpIf { cond: v4, then_tgt: b2, else_tgt: b4 }
+    b2 (match_bind0):
+      term: Jmp { target: b3 }
+    b3 (match_body0):
+      @32..38 ConstBytes { dst: v5, len: 4 }
+      @16..66 Mov { dst: v2, src: v5 }
+      term: Jmp { target: b10 }
+    b4 (match_check1):
+      @40..41 ConstI32 { dst: v6, imm: 1 }
+      @40..41 EqI32 { dst: v7, a: v1, b: v6 }
+      term: JmpIf { cond: v7, then_tgt: b5, else_tgt: b7 }
+    b5 (match_bind1):
+      term: Jmp { target: b6 }
+    b6 (match_body1):
+      @45..50 ConstBytes { dst: v8, len: 3 }
+      @16..66 Mov { dst: v2, src: v8 }
+      term: Jmp { target: b10 }
+    b7 (match_check2):
+      term: Jmp { target: b8 }
+    b8 (match_bind2):
+      term: Jmp { target: b9 }
+    b9 (match_body2):
+      @57..64 ConstBytes { dst: v9, len: 5 }
+      @16..66 Mov { dst: v2, src: v9 }
+      term: Jmp { target: b10 }
+    b10 (match_join):
+      term: Ret { value: v2 }
+}

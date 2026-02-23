@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 /**
  * Copyright 2022 - Jahred Love
  *
@@ -32,7 +34,11 @@ use std::path::PathBuf;
 
 use crate::ast::{Program, StmtKind};
 use crate::error::CompileError;
+use crate::parse::parse_program;
+use crate::templates::expand_templates;
+use crate::resolve::resolve_program;
 use crate::jlyb;
+use crate::typectx::{TypeRepr, TypeCtx, type_repr_from_ty, type_repr_from_jlyb};
 use crate::typectx::{T_BYTES, T_DYNAMIC, T_OBJECT};
 
 #[derive(Clone)]
@@ -46,7 +52,7 @@ pub struct ModuleNode {
     pub key: String, // dotted module key, or "__entry__"
     pub file: LoadedFile,
     pub import_keys: Vec<String>, // module keys, in init param order
-    pub exports: HashMap<String, crate::typectx::TypeRepr>,
+    pub exports: HashMap<String, TypeRepr>,
 }
 
 pub enum ModuleLoadError {
@@ -93,8 +99,8 @@ pub fn collect_import_keys_from_program(p: &Program) -> Vec<String> {
     out
 }
 
-pub fn collect_exports_from_program(p: &Program) -> Result<HashMap<String, crate::typectx::TypeRepr>, CompileError> {
-    let mut out: HashMap<String, crate::typectx::TypeRepr> = HashMap::new();
+pub fn collect_exports_from_program(p: &Program) -> Result<HashMap<String, TypeRepr>, CompileError> {
+    let mut out: HashMap<String, TypeRepr> = HashMap::new();
     for s in &p.stmts {
         if let StmtKind::Let {
             exported: true,
@@ -103,7 +109,7 @@ pub fn collect_exports_from_program(p: &Program) -> Result<HashMap<String, crate
             ..
         } = &s.node
         {
-            out.insert(name.clone(), crate::typectx::type_repr_from_ty(ty)?);
+            out.insert(name.clone(), type_repr_from_ty(ty)?);
         }
     }
     Ok(out)
@@ -167,14 +173,14 @@ pub fn load_module_graph(entry_path: &PathBuf) -> Result<(Vec<ModuleNode>, usize
                 path: path.clone(),
                 msg: e.to_string(),
             })?;
-            let mut prog = crate::parse::parse_program(&src)
+            let mut prog = parse_program(&src)
                 .map_err(|e| ModuleLoadError::Compile { path: path.clone(), src: src.clone(), err: e })?;
-            crate::templates::expand_templates(&mut prog).map_err(|e| ModuleLoadError::Compile {
+            expand_templates(&mut prog).map_err(|e| ModuleLoadError::Compile {
                 path: path.clone(),
                 src: src.clone(),
                 err: e,
             })?;
-            crate::resolve::resolve_program(&prog).map_err(|e| ModuleLoadError::Compile {
+            resolve_program(&prog).map_err(|e| ModuleLoadError::Compile {
                 path: path.clone(),
                 src: src.clone(),
                 err: e,
@@ -196,9 +202,9 @@ pub fn load_module_graph(entry_path: &PathBuf) -> Result<(Vec<ModuleNode>, usize
                 .map_err(|e| ModuleLoadError::Bytecode { path: path.clone(), msg: e.to_string() })?;
             let abi = jlyb::extract_module_abi(&module)
                 .ok_or_else(|| ModuleLoadError::Bytecode { path: path.clone(), msg: "missing module ABI".to_string() })?;
-            let mut exports: HashMap<String, crate::typectx::TypeRepr> = HashMap::new();
+            let mut exports: HashMap<String, TypeRepr> = HashMap::new();
             for (name, tid) in &abi.exports {
-                let tr = crate::typectx::type_repr_from_jlyb(&module, *tid).map_err(|e| ModuleLoadError::Bytecode {
+                let tr = type_repr_from_jlyb(&module, *tid).map_err(|e| ModuleLoadError::Bytecode {
                     path: path.clone(),
                     msg: e.message,
                 })?;
@@ -295,7 +301,7 @@ pub fn link_modules_and_build_entry(
         return Err("internal: mods/import_lists length mismatch".to_string());
     }
 
-    let base_types = crate::typectx::TypeCtx::new_program_base().types;
+    let base_types = TypeCtx::new_program_base().types;
     let mut out = jlyb::Module {
         types: base_types,
         sigs: Vec::new(),

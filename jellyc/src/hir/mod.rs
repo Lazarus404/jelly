@@ -22,8 +22,27 @@ pub struct NodeId(pub Span);
 pub struct SemanticInfo {
     pub expr_types: HashMap<NodeId, TypeId>,
     pub binding_types: HashMap<NodeId, TypeId>,
+    pub const_inits: HashMap<NodeId, ConstInit>,
     pub captures: HashMap<NodeId, Vec<Capture>>,
     pub type_ctx: TypeCtx,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ConstInit {
+    /// A fully-evaluated compile-time constant value.
+    Value(ConstValue),
+    /// An alias to an earlier `const` binding (used to preserve identity for pointer-y constants like `Bytes`).
+    Alias(String),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ConstValue {
+    Bool(bool),
+    Int(i64),
+    Float(f64),
+    Bytes(Vec<u8>),
+    Atom(String),
+    Null,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -37,6 +56,7 @@ impl Default for SemanticInfo {
         Self {
             expr_types: HashMap::new(),
             binding_types: HashMap::new(),
+            const_inits: HashMap::new(),
             captures: HashMap::new(),
             type_ctx: TypeCtx::new_program_base(),
         }
@@ -75,6 +95,10 @@ pub fn type_name(tid: TypeId, tc: &TypeCtx) -> String {
                         out.push('>');
                         return out;
                     }
+                }
+                // Nominal object kinds: use stable tag (hash of nominal key).
+                if te.p0 != 0 {
+                    return format!("Object#{:08x}", te.p0);
                 }
             }
             _ => {}
@@ -118,9 +142,17 @@ fn render_stmt(s: &Stmt, info: &SemanticInfo, indent: usize, out: &mut String) {
     let span = s.span;
     let bind_t = info.binding_types.get(&NodeId(span)).copied();
     match &s.node {
-        StmtKind::Let { exported, name, ty, expr, .. } => {
+        StmtKind::Let {
+            is_const,
+            exported,
+            name,
+            ty,
+            expr,
+            ..
+        } => {
             out.push_str(&format!(
-                "{pad}let{} {}{} @{}..{}{}\n",
+                "{pad}{}{} {}{} @{}..{}{}\n",
+                if *is_const { "const" } else { "let" },
                 if *exported { " export" } else { "" },
                 name,
                 ty.as_ref()

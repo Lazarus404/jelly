@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 /**
  * Copyright 2022 - Jahred Love
  *
@@ -145,6 +147,7 @@ fn push_scalar_utf8(out: &mut Vec<u8>, cp: u32, at: usize) -> Result<(), Compile
 
 const KEYWORDS: &[(&str, TokenKind)] = &[
     ("let", TokenKind::KwLet),
+    ("const", TokenKind::KwConst),
     ("if", TokenKind::KwIf),
     ("else", TokenKind::KwElse),
     ("while", TokenKind::KwWhile),

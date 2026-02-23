@@ -37,6 +37,7 @@ use crate::ir::{IrBuilder, IrOp, IrTerminator, TypeId, VRegId};
 use crate::lower::{lower_stmt, Binding, LowerCtx};
 
 use super::lower_expr;
+use super::lower_truthy;
 use super::T_BOOL;
 use super::T_DYNAMIC;
 
@@ -64,9 +65,11 @@ pub fn lower_if_expr(
     b: &mut IrBuilder,
 ) -> Result<(VRegId, TypeId), CompileError> {
     let (v_cond, t_cond) = lower_expr(cond, ctx, b)?;
-    if t_cond != T_BOOL {
-        return Err(CompileError::new(ErrorKind::Type, cond.span, "if condition must be bool"));
-    }
+    let v_cond = if t_cond == T_BOOL {
+        v_cond
+    } else {
+        lower_truthy(cond.span, v_cond, t_cond, ctx, b)?
+    };
 
     let then_b = b.new_block(Some("if_then".to_string()));
     let else_b = b.new_block(Some("if_else".to_string()));

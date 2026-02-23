@@ -1,0 +1,5 @@
+let inc : I32 -> I32 = fn(x) { let y = x; y = y + 1; return y; };
+let h = inc(41);
+let r = if (h == 42) { "ok" } else { "bad" };
+System.assert(r == "ok");
+r

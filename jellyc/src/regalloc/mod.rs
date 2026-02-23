@@ -30,12 +30,10 @@
  mod live;
 pub mod spill;
 
-use std::collections::{HashMap, HashSet};
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct VReg(pub u32);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PReg(pub u16);
 
 #[derive(Clone, Debug)]
@@ -55,7 +53,7 @@ pub enum AllocError {
     TooManyPhysicalRegs,
     VRegOutOfRange { vreg: VReg, vregs: u32 },
     MultipleDefs { vreg: VReg },
-    UseBeforeDef { vreg: VReg },
+    UsedButNeverDefined { vreg: VReg },
     OutOfPhysicalRegsNoSpill,
     IntervalInternalBug,
 }
@@ -67,7 +65,10 @@ pub enum AllocError {
 ///
 /// The caller must ensure `temp` is not used as a destination of any move.
 pub fn schedule_parallel_moves(moves: &[(PReg, PReg)], temp: PReg) -> Vec<(PReg, PReg)> {
-    let mut map: HashMap<PReg, PReg> = HashMap::new();
+    use std::collections::{BTreeMap, BTreeSet};
+
+    // Use deterministic structures: the result should not depend on hash iteration order.
+    let mut map: BTreeMap<PReg, PReg> = BTreeMap::new();
     for &(d, s) in moves {
         if d != s {
             map.insert(d, s);
@@ -75,29 +76,26 @@ pub fn schedule_parallel_moves(moves: &[(PReg, PReg)], temp: PReg) -> Vec<(PReg,
     }
 
     let mut out: Vec<(PReg, PReg)> = Vec::new();
-    let mut dsts: HashSet<PReg> = map.keys().copied().collect();
-
-    loop {
-        let mut progressed = false;
-        let ready: Option<(PReg, PReg)> = map
-            .iter()
-            .find_map(|(&d, &s)| if !dsts.contains(&s) { Some((d, s)) } else { None });
-
-        if let Some((d, s)) = ready {
-            out.push((d, s));
-            map.remove(&d);
-            progressed = true;
-        }
-
-        if !progressed {
-            break;
-        }
-        dsts = map.keys().copied().collect();
-    }
 
     while !map.is_empty() {
-        dsts = map.keys().copied().collect();
-        let start = *dsts.iter().next().expect("non-empty");
+        // Drain all moves whose sources won't be clobbered by remaining destinations.
+        loop {
+            let dsts: BTreeSet<PReg> = map.keys().copied().collect();
+            let ready = map.iter().find_map(|(&d, &s)| if !dsts.contains(&s) { Some((d, s)) } else { None });
+            if let Some((d, s)) = ready {
+                out.push((d, s));
+                map.remove(&d);
+            } else {
+                break;
+            }
+        }
+
+        if map.is_empty() {
+            break;
+        }
+
+        // Break a cycle deterministically (pick smallest dst).
+        let start = *map.keys().next().expect("non-empty");
         assert!(start != temp);
 
         out.push((temp, start));
@@ -112,20 +110,6 @@ pub fn schedule_parallel_moves(moves: &[(PReg, PReg)], temp: PReg) -> Vec<(PReg,
             } else {
                 out.push((d, s));
                 d = s;
-            }
-        }
-
-        dsts = map.keys().copied().collect();
-        loop {
-            let ready: Option<(PReg, PReg)> = map
-                .iter()
-                .find_map(|(&d, &s)| if !dsts.contains(&s) { Some((d, s)) } else { None });
-            if let Some((d, s)) = ready {
-                out.push((d, s));
-                map.remove(&d);
-                dsts = map.keys().copied().collect();
-            } else {
-                break;
             }
         }
     }

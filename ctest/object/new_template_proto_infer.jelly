@@ -1,0 +1,11 @@
+let init<T>: (Object, T) -> Object = fn(self, v) {
+  self.v = v;
+  return self;
+};
+
+let Proto<T>: Object = { init: init<T> };
+
+let o = new Proto(7);
+let r = if (o.v == 7) { "ok" } else { "bad" };
+System.assert(r == "ok");
+r

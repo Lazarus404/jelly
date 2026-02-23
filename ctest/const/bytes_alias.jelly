@@ -1,0 +1,6 @@
+const a = "A";
+const b = a;
+Bytes.set_u8(a, 0, 66);
+System.assert(Bytes.get_u8(b, 0) == 66);
+"ok"
+

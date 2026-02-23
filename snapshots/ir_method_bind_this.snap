@@ -1,0 +1,45 @@
+ir {
+  funcs: 2
+  entry: 0
+  fn[0] main params=0 entry=b0
+    vregs:
+      v0: Object
+      v1: (Object, I32) -> I32
+      v2: (Object, I32) -> I32
+      v3: Object
+      v4: (Object, I32) -> I32
+      v5: (I32) -> I32
+      v6: (I32) -> I32
+      v7: I32
+      v8: I32
+      v9: I32
+      v10: Bytes
+    b0 (entry):
+      @0..0 ObjNew { dst: v0 }
+      @32..61 ConstFun { dst: v2, func_index: 6 }
+      @0..62 Mov { dst: v1, src: v2 }
+      @71..83 ObjNew { dst: v3 }
+      @71..83 ObjSetAtom { obj: v3, atom: "inc", value: v1 }
+      @105..110 ObjGetAtom { dst: v4, obj: v3, atom: "inc" }
+      @105..110 BindThis { dst: v5, func: v4, this: v3 }
+      @85..111 Mov { dst: v6, src: v5 }
+      @127..129 ConstI32 { dst: v7, imm: 41 }
+      @125..130 Mov { dst: v8, src: v7 }
+      @125..130 Call { dst: v9, callee: v6, sig_id: 1, arg_base: v8, nargs: 1 }
+      @132..136 ConstBytes { dst: v10, len: 2 }
+      term: Ret { value: v10 }
+  fn[1] lambda6 params=2 entry=b0
+    vregs:
+      v0: Object
+      v1: I32
+      v2: (Object, I32) -> I32
+      v3: I32
+      v4: I32
+    b0 (entry):
+      @32..61 ConstFun { dst: v2, func_index: 6 }
+      term: Jmp { target: b1 }
+    b1 (fn_body):
+      @57..58 ConstI32 { dst: v3, imm: 1 }
+      @53..58 AddI32 { dst: v4, a: v1, b: v3 }
+      term: Ret { value: v4 }
+}

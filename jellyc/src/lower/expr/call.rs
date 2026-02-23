@@ -31,12 +31,14 @@
 
 use crate::ast::ExprKind;
 use crate::error::{CompileError, ErrorKind};
+use crate::hir::NodeId;
 use crate::ir::{IrBuilder, IrOp, TypeId, VRegId};
 
+use crate::lower::is_object_kind;
 use crate::lower::intern_atom;
 use super::{coerce_numeric, is_narrowing_numeric, lower_expr_expect, LowerCtx};
 use super::{
-    T_DYNAMIC, T_OBJECT,
+    T_OBJECT,
 };
 
 pub fn lower_call_expr(
@@ -44,12 +46,17 @@ pub fn lower_call_expr(
     callee: &crate::ast::Expr,
     type_args: &[crate::ast::Ty],
     args: &[crate::ast::Expr],
-    expect: Option<TypeId>,
     ctx: &mut LowerCtx,
     b: &mut IrBuilder,
 ) -> Result<(VRegId, TypeId), CompileError> {
+        let out_tid = ctx
+            .sem_expr_types
+            .get(&NodeId(e.span))
+            .copied()
+            .ok_or_else(|| CompileError::new(ErrorKind::Internal, e.span, "missing semantic type for call"))?;
+
         // Builtins are handled in a shared module so inference + lowering stay consistent.
-        if let Some(out) = super::builtins::try_lower_builtin_call(e, callee, type_args, args, expect, ctx, b)? {
+        if let Some(out) = super::builtins::try_lower_builtin_call(e, callee, type_args, args, ctx, b)? {
             return Ok(out);
         }
 
@@ -67,7 +74,7 @@ pub fn lower_call_expr(
             // Module namespace call: `Mod.f(args...)` does NOT bind `this`.
             if let ExprKind::Var(alias) = &base.node {
                 if ctx.module_alias_exports.contains_key(alias) {
-                    let (v_obj, t_obj) = lower_expr_expect(base, Some(T_OBJECT), ctx, b)?;
+                    let (v_obj, t_obj) = lower_expr_expect(base, ctx, b)?;
                     if t_obj != T_OBJECT {
                         return Err(CompileError::new(ErrorKind::Type, base.span, "module namespace must be Object"));
                     }
@@ -108,7 +115,19 @@ pub fn lower_call_expr(
                     let mut arg_vals: Vec<(VRegId, TypeId)> = Vec::with_capacity(args.len());
                     for (i, a) in args.iter().enumerate() {
                         let et = sig_args.get(i).copied();
-                        arg_vals.push(lower_expr_expect(a, et, ctx, b)?);
+                        let (v, t) = lower_expr_expect(a, ctx, b)?;
+                        if let Some(et) = et {
+                            if et == crate::typectx::T_DYNAMIC && t != crate::typectx::T_DYNAMIC {
+                                let out = b.new_vreg(crate::typectx::T_DYNAMIC);
+                                b.emit(a.span, IrOp::ToDyn { dst: out, src: v });
+                                arg_vals.push((out, crate::typectx::T_DYNAMIC));
+                                continue;
+                            }
+                            if t != et {
+                                return Err(CompileError::new(ErrorKind::Internal, a.span, "semantic type mismatch for module export call arg"));
+                            }
+                        }
+                        arg_vals.push((v, t));
                     }
 
                     let atom_id = intern_atom(name, ctx);
@@ -147,16 +166,16 @@ pub fn lower_call_expr(
                 }
             }
 
-            let ret_tid = expect.unwrap_or(T_DYNAMIC);
-            let (v_obj, t_obj) = lower_expr_expect(base, Some(T_OBJECT), ctx, b)?;
-            if t_obj != T_OBJECT {
+            let ret_tid = out_tid;
+            let (v_obj, t_obj) = lower_expr_expect(base, ctx, b)?;
+            if !is_object_kind(&ctx.type_ctx, t_obj) {
                 return Err(CompileError::new(ErrorKind::Type, base.span, "method receiver must be Object"));
             }
 
             // Evaluate args left-to-right.
             let mut arg_vals: Vec<(VRegId, TypeId)> = Vec::with_capacity(args.len());
             for a in args {
-                arg_vals.push(lower_expr_expect(a, None, ctx, b)?);
+                arg_vals.push(lower_expr_expect(a, ctx, b)?);
             }
 
             // Unbound method type: (Object, A...) -> R
@@ -215,7 +234,7 @@ pub fn lower_call_expr(
             return Ok((out, ret_tid));
         }
 
-        let (vcallee, callee_tid) = lower_expr_expect(callee, None, ctx, b)?;
+        let (vcallee, callee_tid) = lower_expr_expect(callee, ctx, b)?;
         let te = ctx
             .type_ctx
             .types
@@ -239,8 +258,13 @@ pub fn lower_call_expr(
         // Build a contiguous vreg window holding the arguments (implicit widening/narrowing with warning).
         let mut arg_vals: Vec<VRegId> = Vec::with_capacity(args.len());
         for (i, a) in args.iter().enumerate() {
-            let (va, ta) = lower_expr_expect(a, Some(sig_args[i]), ctx, b)?;
+            let (va, ta) = lower_expr_expect(a, ctx, b)?;
             let va = if ta != sig_args[i] {
+                if sig_args[i] == crate::typectx::T_DYNAMIC {
+                    let out = b.new_vreg(crate::typectx::T_DYNAMIC);
+                    b.emit(a.span, IrOp::ToDyn { dst: out, src: va });
+                    out
+                } else
                 if super::is_numeric(ta) && super::is_numeric(sig_args[i]) {
                     let coerced = coerce_numeric(a.span, va, ta, sig_args[i], b)
                         .map_err(|_| CompileError::new(ErrorKind::Type, a.span, "call argument type mismatch"))?;

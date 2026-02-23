@@ -165,7 +165,14 @@ pub fn parse_stmt(p: &mut P) -> Result<Option<Stmt>, CompileError> {
         )));
     }
 
-    if let Some(let_span) = p.eat_kw_span("let") {
+    let let_span = p.eat_kw_span("let");
+    let const_span = if let_span.is_none() {
+        p.eat_kw_span("const")
+    } else {
+        None
+    };
+    if let Some(bind_span) = let_span.or(const_span) {
+        let is_const = const_span.is_some();
         let name = p.parse_ident()?;
         let mut type_params: Vec<String> = Vec::new();
         if p.eat(TokenKind::Lt) {
@@ -184,11 +191,12 @@ pub fn parse_stmt(p: &mut P) -> Result<Option<Stmt>, CompileError> {
         let expr = p.parse_expr()?;
         expect_stmt_terminator(p)?;
         let span = Span::new(
-            export_span.map(|s| s.start).unwrap_or(let_span.start),
+            export_span.map(|s| s.start).unwrap_or(bind_span.start),
             p.last_span_end(),
         );
         return Ok(Some(Stmt::new(
             StmtKind::Let {
+                is_const,
                 exported,
                 name,
                 type_params,
@@ -202,7 +210,7 @@ pub fn parse_stmt(p: &mut P) -> Result<Option<Stmt>, CompileError> {
         return Err(CompileError::at(
             ErrorKind::Parse,
             export_span.unwrap().start,
-            "expected 'let' or 'prototype' after 'export'",
+            "expected 'let', 'const', or 'prototype' after 'export'",
         ));
     }
     if let Some(while_span) = p.eat_kw_span("while") {
