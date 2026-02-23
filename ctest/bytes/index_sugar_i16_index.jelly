@@ -1,0 +1,7 @@
+let b: Bytes = Bytes.new(2);
+let idx: I16 = 0;
+b[idx] = 65;
+let x: I32 = b[idx];
+System.assert(x == 65);
+"ok"
+
