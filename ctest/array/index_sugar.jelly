@@ -1,0 +1,10 @@
+let arr = Array.new<I32>(4);
+let a0 = arr[0] = 10;
+let a1 = arr[1] = 32;
+System.assert(a0 == arr[0] == 10);
+System.assert(a1 == arr[1] == 32);
+
+let j = arr[0] + arr[1];
+System.assert(j == 42);
+
+"ok"

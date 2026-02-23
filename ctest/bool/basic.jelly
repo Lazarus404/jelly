@@ -1,0 +1,4 @@
+let cond = true;
+let r = if (!cond == false) { "ok" } else { "bad" };
+System.assert(r == "ok");
+r

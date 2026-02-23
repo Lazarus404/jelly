@@ -90,25 +90,11 @@ jelly_type_kind vm_reg_kind(const jelly_bc_module* m, const jelly_bc_function* f
   return m->types[tid].kind;
 }
 
-void* vm_reg_ptr(reg_frame* rf, uint32_t r) {
-  return (void*)(rf->mem + rf->off[r]);
-}
+/* vm_reg_ptr, vm_load_u32, vm_store_u32 are static inline in vm_internal.h for hot path. */
 
 /* Direct loads/stores for aligned primitives (frame layout guarantees alignment). */
-uint32_t vm_load_u32(reg_frame* rf, uint32_t r) {
-  return *(const uint32_t*)vm_reg_ptr(rf, r);
-}
 
-void vm_store_u32(reg_frame* rf, uint32_t r, uint32_t v) {
-  *(uint32_t*)vm_reg_ptr(rf, r) = v;
-}
-
-/* Store with I8/I16 range masking (wrap semantics). Caller passes kind of dst reg. */
-void vm_store_u32_masked(reg_frame* rf, uint32_t r, uint32_t v, jelly_type_kind k) {
-  if(k == JELLY_T_I8) v = (uint32_t)(int32_t)(int8_t)(v & 0xFFu);
-  else if(k == JELLY_T_I16) v = (uint32_t)(int32_t)(int16_t)(v & 0xFFFFu);
-  vm_store_u32(rf, r, v);
-}
+/* vm_store_u32_masked, vm_load_f64, vm_store_f64, vm_load_ptr, vm_store_ptr are static inline in vm_internal.h. */
 
 float vm_load_f32(reg_frame* rf, uint32_t r) {
   return *(const float*)vm_reg_ptr(rf, r);
@@ -128,14 +114,6 @@ int64_t vm_load_i64(reg_frame* rf, uint32_t r) {
 
 void vm_store_i64(reg_frame* rf, uint32_t r, int64_t v) {
   *(int64_t*)vm_reg_ptr(rf, r) = v;
-}
-
-double vm_load_f64(reg_frame* rf, uint32_t r) {
-  return *(const double*)vm_reg_ptr(rf, r);
-}
-
-void vm_store_f64(reg_frame* rf, uint32_t r, double v) {
-  *(double*)vm_reg_ptr(rf, r) = v;
 }
 
 /* F16: IEEE 754 binary16 stored in low 16 bits of 32-bit slot. */
@@ -180,24 +158,4 @@ uint16_t vm_f32_to_f16_bits(float f) {
   if(exp16 >= 31) return (uint16_t)(sign | 0x7C00u);
   if(exp16 <= 0) return (uint16_t)sign;
   return (uint16_t)(sign | ((uint32_t)exp16 << 10) | (mant >> 13));
-}
-
-jelly_value vm_load_val(reg_frame* rf, uint32_t r) {
-  jelly_value v;
-  memcpy(&v, vm_reg_ptr(rf, r), sizeof(v));
-  return v;
-}
-
-void vm_store_val(reg_frame* rf, uint32_t r, jelly_value v) {
-  memcpy(vm_reg_ptr(rf, r), &v, sizeof(v));
-}
-
-void* vm_load_ptr(reg_frame* rf, uint32_t r) {
-  void* p = NULL;
-  memcpy(&p, vm_reg_ptr(rf, r), sizeof(void*));
-  return p;
-}
-
-void vm_store_ptr(reg_frame* rf, uint32_t r, void* p) {
-  memcpy(vm_reg_ptr(rf, r), &p, sizeof(void*));
 }

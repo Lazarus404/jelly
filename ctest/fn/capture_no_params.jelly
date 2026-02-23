@@ -1,0 +1,12 @@
+// Regression: a paramless closure with captures requires CAP_START support even when cap_start==0.
+
+let make = fn() {
+  let x: I32 = 42;
+  let get: () -> I32 = fn() { x };
+  let r: I32 = get();
+  System.assert(r == 42);
+  "ok"
+};
+
+make()
+

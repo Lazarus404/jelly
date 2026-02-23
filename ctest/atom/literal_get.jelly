@@ -1,0 +1,8 @@
+let o = {a: "ok"};
+let val = Object.get<Bytes>(o, :a);
+
+let b = :some_atom;
+let r = if (b == :some_atom) { val } else { "bad" }
+
+System.assert(r == "ok");
+r

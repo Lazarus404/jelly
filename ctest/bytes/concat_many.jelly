@@ -1,0 +1,10 @@
+let b = "a" + "b" + "c" + "d";
+let ok =
+  (Bytes.len(b) == 4) &&
+  (Bytes.get_u8(b, 0) == 97) &&
+  (Bytes.get_u8(b, 1) == 98) &&
+  (Bytes.get_u8(b, 2) == 99) &&
+  (Bytes.get_u8(b, 3) == 100);
+let r = if (ok) { "ok" } else { "bad" };
+System.assert(r == "ok");
+r

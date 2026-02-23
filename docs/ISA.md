@@ -119,6 +119,13 @@ Notation:
   - if closure has `bound_this`, it is injected as callee arg0
   - captures are copied into callee’s trailing registers
 
+- **`JOP_TAILCALL a b c imm`**:
+  - tail call: replace current frame instead of pushing (proper tail recursion)
+  - same encoding as `JOP_CALL`; `a` unused for bytecode callees (caller_dst preserved from frame)
+
+- **`JOP_TAILCALLR a b c imm`**:
+  - tail call via closure in `rB`; args base `imm`, nargs `c`; same semantics as `JOP_TAILCALL`
+
 - **`JOP_CONST_FUN a imm`**:
   - `rA:function = fun(func_index=imm)`
 

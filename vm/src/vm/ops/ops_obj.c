@@ -53,11 +53,7 @@ op_result op_obj_has_atom(exec_ctx* ctx, const jelly_insn* ins) {
 }
 
 static void obj_update_proto_cache(jelly_object* o, jelly_value v, const jelly_bc_module* m) {
-  int proto_enabled = 0;
-  if(m->natoms > JELLY_ATOM___PROTO__ && m->atoms[JELLY_ATOM___PROTO__]) {
-    proto_enabled = (strcmp(m->atoms[JELLY_ATOM___PROTO__], "__proto__") == 0);
-  }
-  if(!proto_enabled) return;
+  if(!m->proto_enabled) return;
   if(jelly_is_ptr(v)) {
     void* p = jelly_as_ptr(v);
     if(p) {
@@ -85,11 +81,7 @@ op_result op_obj_get_atom(exec_ctx* ctx, const jelly_insn* ins) {
   if(!o) jelly_vm_panic();
   uint32_t atom_id = ins->imm;
 
-  int proto_enabled = 0;
-  if(m->natoms > JELLY_ATOM___PROTO__ && m->atoms[JELLY_ATOM___PROTO__]) {
-    proto_enabled = (strcmp(m->atoms[JELLY_ATOM___PROTO__], "__proto__") == 0);
-  }
-  if(!proto_enabled) {
+  if(!m->proto_enabled) {
     jelly_value v = jelly_object_get(o, atom_id);
     vm_store_from_boxed(m, f, &fr->rf, ins->a, v);
     return OP_CONTINUE;
@@ -149,11 +141,7 @@ op_result op_obj_get(exec_ctx* ctx, const jelly_insn* ins) {
     (void)jelly_vm_trap(vm, JELLY_TRAP_BOUNDS, "obj_get atom id out of range");
     return OP_CONTINUE;
   }
-  int proto_enabled = 0;
-  if(m->natoms > JELLY_ATOM___PROTO__ && m->atoms[JELLY_ATOM___PROTO__]) {
-    proto_enabled = (strcmp(m->atoms[JELLY_ATOM___PROTO__], "__proto__") == 0);
-  }
-  if(!proto_enabled) {
+  if(!m->proto_enabled) {
     jelly_value v = jelly_object_get(o, atom_id);
     vm_store_from_boxed(m, f, &fr->rf, ins->a, v);
     return OP_CONTINUE;

@@ -3,5 +3,18 @@ name = "jellyc"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["embed-vm"]
+embed-vm = []
+
 [dependencies]
+ctrlc = "3.4"
+rustyline = "17"
+thiserror = "2.0.18"
+
+[build-dependencies]
+cmake = "0.1"
+
+[dev-dependencies]
+insta = "1"
 

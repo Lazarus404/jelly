@@ -1,0 +1,16 @@
+// Numeric types interchangeable in arithmetic (int+float, coercion)
+let i : I32 = 10;
+let f : F64 = 2.5;
+let sum : F64 = i + f;
+System.assert(sum == 12.5);
+let prod : F64 = i * f;
+System.assert(prod == 25.0);
+let diff : F64 = i - f;
+System.assert(diff == 7.5);
+let quot : F64 = i / f;
+System.assert(quot == 4.0);
+let i8 : I8 = 5i8;
+let f64 : F64 = 3.0;
+let mixed : F64 = i8 + f64;
+System.assert(mixed == 8.0);
+"ok"

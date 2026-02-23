@@ -1,0 +1,8 @@
+let p = { a: 7 };
+let o = { __proto__: p };
+let r = match (o) {
+  {a: 7} => { "bad" }
+  _ => { "ok" }
+};
+System.assert(r == "ok");
+r

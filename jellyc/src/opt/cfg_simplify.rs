@@ -26,9 +26,11 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  */
-
-// CFG simplification: remove unreachable blocks and update references.
-
+// CFG (Control Flow Graph) simplification: remove unreachable blocks and update references.
+//
+// This pass removes unreachable blocks from each function and updates references to reachable blocks.
+//
+// This pass is used to simplify the CFG and make it easier to analyze and optimize.
 use crate::ir::{BlockId, IrBlock, IrFunction, IrModule, IrTerminator};
 use std::collections::HashSet;
 
@@ -118,7 +120,9 @@ fn reachable_blocks(func: &IrFunction) -> HashSet<usize> {
 fn terminator_successors(term: &IrTerminator) -> Vec<usize> {
     match term {
         IrTerminator::Jmp { target } => vec![target.0 as usize],
-        IrTerminator::JmpIf { then_tgt, else_tgt, .. } => {
+        IrTerminator::JmpIf {
+            then_tgt, else_tgt, ..
+        } => {
             vec![then_tgt.0 as usize, else_tgt.0 as usize]
         }
         IrTerminator::SwitchKind { cases, default, .. } => {
@@ -126,7 +130,7 @@ fn terminator_successors(term: &IrTerminator) -> Vec<usize> {
             v.push(default.0 as usize);
             v
         }
-        IrTerminator::Ret { .. } | IrTerminator::Unreachable => vec![],
+        IrTerminator::Ret { .. } | IrTerminator::TailCall { .. } | IrTerminator::Unreachable => vec![],
     }
 }
 
@@ -137,7 +141,9 @@ fn remap_terminator(term: &mut IrTerminator, old_to_new: &[Option<BlockId>]) {
                 *target = new;
             }
         }
-        IrTerminator::JmpIf { then_tgt, else_tgt, .. } => {
+        IrTerminator::JmpIf {
+            then_tgt, else_tgt, ..
+        } => {
             if let Some(new) = old_to_new.get(then_tgt.0 as usize).and_then(|o| *o) {
                 *then_tgt = new;
             }
@@ -155,6 +161,6 @@ fn remap_terminator(term: &mut IrTerminator, old_to_new: &[Option<BlockId>]) {
                 *default = new;
             }
         }
-        IrTerminator::Ret { .. } | IrTerminator::Unreachable => {}
+        IrTerminator::Ret { .. } | IrTerminator::TailCall { .. } | IrTerminator::Unreachable => {}
     }
 }

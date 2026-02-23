@@ -1,0 +1,7 @@
+let t1 = (7, "ok");
+let t2 = (7, "ok");
+let t3 = (8, "ok");
+let ok = (t1 == t2) && (t1 != t3);
+let r = if (ok) { "ok" } else { "bad" };
+System.assert(r == "ok");
+r

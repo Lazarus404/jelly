@@ -1,0 +1,28 @@
+use crate::token::TokenKind;
+
+pub(super) const KEYWORDS: &[(&str, TokenKind)] = &[
+    ("let", TokenKind::KwLet),
+    ("const", TokenKind::KwConst),
+    ("if", TokenKind::KwIf),
+    ("else", TokenKind::KwElse),
+    ("while", TokenKind::KwWhile),
+    ("break", TokenKind::KwBreak),
+    ("continue", TokenKind::KwContinue),
+    ("return", TokenKind::KwReturn),
+    ("try", TokenKind::KwTry),
+    ("catch", TokenKind::KwCatch),
+    ("throw", TokenKind::KwThrow),
+    ("new", TokenKind::KwNew),
+    ("null", TokenKind::Null),
+    ("true", TokenKind::BoolLit(true)),
+    ("false", TokenKind::BoolLit(false)),
+    ("fn", TokenKind::KwFn),
+    ("match", TokenKind::KwMatch),
+    ("when", TokenKind::KwWhen),
+    ("prototype", TokenKind::KwPrototype),
+    ("import", TokenKind::KwImport),
+    ("export", TokenKind::KwExport),
+    ("type", TokenKind::KwType),
+    ("as", TokenKind::KwAs),
+    ("from", TokenKind::KwFrom),
+];

@@ -345,6 +345,10 @@ jelly_bc_result jelly_bc_read(const uint8_t* data, size_t size, jelly_bc_module*
     free(lens);
     m->atoms = atoms;
     m->atoms_data = atom_data;
+    m->proto_enabled = (m->natoms > JELLY_ATOM___PROTO__ && m->atoms[JELLY_ATOM___PROTO__] &&
+                        strcmp(m->atoms[JELLY_ATOM___PROTO__], "__proto__") == 0);
+  } else {
+    m->proto_enabled = 0;
   }
 
   // --- const pools
@@ -453,6 +457,9 @@ jelly_bc_result jelly_bc_read(const uint8_t* data, size_t size, jelly_bc_module*
     if(!funcs) { jelly_bc_free(m); *out = NULL; return err(JELLY_BC_OUT_OF_MEMORY, "oom funcs", r.off); }
     m->funcs = funcs;
 
+    /* Cache getenv once; avoid per-function lookup on hot load path. */
+    int trace_closure = (getenv("JELLY_TRACE_CLOSURE") != NULL);
+
     for(uint32_t i = 0; i < m->nfuncs; i++) {
       uint32_t nregs = 0, ninsns = 0, cap_start = 0;
       rr = rd_u32(&r, &nregs); if(rr.err) { jelly_bc_free(m); *out = NULL; return rr; }
@@ -494,20 +501,24 @@ jelly_bc_result jelly_bc_read(const uint8_t* data, size_t size, jelly_bc_module*
           insns[j].c = c;
           insns[j].imm = imm;
 
+#ifndef NDEBUG
           jelly_bc_result vi = jelly_bc_validate_insn(m, reg_types, &insns[j], nregs, j, ninsns, m->nfuncs);
           if(vi.err) {
             free(reg_types); free(insns); jelly_bc_free(m); *out = NULL; vi.offset = r.off; return vi;
           }
+#endif
         }
 
+#ifndef NDEBUG
         jelly_bc_result vr = jelly_bc_validate_function_semantics(m, reg_types, insns, nregs, ninsns);
         if(vr.err) { free(reg_types); free(insns); jelly_bc_free(m); *out = NULL; vr.offset = r.off; return vr; }
+#endif
       }
 
       funcs[i].nregs = nregs;
       funcs[i].cap_start = cap_start;
       funcs[i].reg_types = reg_types;
-      if(getenv("JELLY_TRACE_CLOSURE") && (cap_start > 0 || (m->features & (uint32_t)JELLY_BC_FEAT_CAP_START))) {
+      if(trace_closure && (cap_start > 0 || (m->features & (uint32_t)JELLY_BC_FEAT_CAP_START))) {
         fprintf(stderr, "[JELLY_TRACE] loader: func[%u] nregs=%u cap_start=%u feat_cap_start=%u\n",
                 (unsigned)i, (unsigned)nregs, (unsigned)cap_start,
                 (unsigned)((m->features & (uint32_t)JELLY_BC_FEAT_CAP_START) ? 1 : 0));

@@ -1,0 +1,7 @@
+let f : I32 -> I32 = fn(x) { return x; };
+let g : I32 -> I32 = fn(x) { return x; };
+
+let h : I32 = (if (true) { f } else { g })(7);
+let r = if (h == 7) { "ok" } else { "bad" };
+System.assert(r == "ok");
+r

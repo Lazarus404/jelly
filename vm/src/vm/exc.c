@@ -79,8 +79,9 @@ void vm_exc_pop_for_frame(jelly_vm* vm, uint32_t frame_index) {
 void vm_unwind_all_frames(jelly_vm* vm) {
   if(!vm || !vm->call_frames) return;
   call_frame* frames = (call_frame*)vm->call_frames;
-  for(uint32_t i = 0; i < vm->call_frames_len; i++) {
-    vm_rf_release(vm, &frames[i].rf);
+  /* Release in LIFO order (top first) for frame stack compatibility. */
+  for(uint32_t i = vm->call_frames_len; i > 0; i--) {
+    vm_rf_release(vm, &frames[i - 1u].rf);
   }
   free(vm->call_frames);
   vm->call_frames = NULL;

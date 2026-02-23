@@ -77,7 +77,11 @@ op_result op_ret(exec_ctx* ctx, const jelly_insn* ins) {
   if(caller->f->reg_types[caller_dst] == ret_tid) {
     jelly_type_kind k = m->types[ret_tid].kind;
     size_t sz = jelly_slot_size(k);
-    memmove(vm_reg_ptr(&caller->rf, caller_dst), vm_reg_ptr(&fr->rf, ins->a), sz);
+    uint8_t* dst = (uint8_t*)vm_reg_ptr(&caller->rf, caller_dst);
+    const uint8_t* src = (const uint8_t*)vm_reg_ptr(&fr->rf, ins->a);
+    if(sz == 4u) *(uint32_t*)dst = *(const uint32_t*)src;
+    else if(sz == 8u) *(uint64_t*)dst = *(const uint64_t*)src;
+    else memmove(dst, src, sz);
     vm_rf_release(vm, &fr->rf);
     vm->call_frames_len--;
     return OP_CONTINUE;

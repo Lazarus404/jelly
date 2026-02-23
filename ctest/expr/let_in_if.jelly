@@ -1,0 +1,6 @@
+// let as expression in if condition
+if (let x = 42) {
+  x
+} else {
+  0
+}

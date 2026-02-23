@@ -1,0 +1,12 @@
+// Tail-recursive sum: the recursive call is in tail position.
+// With TCO (Jmp for self, TAILCALL for non-self), this runs in O(1) stack space.
+// Without TCO, sum(1_000_000, 0) would stack overflow.
+let sum: (I32, I32) -> I32 = fn(n, acc) {
+  return if (n == 0) { acc } else { sum(n - 1, acc + n) };
+};
+
+let n: I32 = 50000;
+let r: I32 = sum(n, 0);
+// sum(1..n) = n*(n+1)/2; for n=50000: 1250025000
+System.assert(r == 1250025000);
+"ok"

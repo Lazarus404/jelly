@@ -1,0 +1,5 @@
+let o = { a: 0 };
+o.a = 7;
+let sum: I32 = 0 + o.a;
+System.assert(sum > 0);
+"ok"

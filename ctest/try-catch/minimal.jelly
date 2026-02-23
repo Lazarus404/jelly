@@ -1,0 +1,3 @@
+let r = try { throw 1; "bad" } catch (e) { "ok" };
+System.assert(r == "ok");
+r

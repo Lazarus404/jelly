@@ -26,49 +26,41 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  */
-
 // Function literal lowering.
-
 use std::collections::HashMap;
 
 use crate::error::{CompileError, ErrorKind};
+use crate::hir::NodeId;
 use crate::ir::{BlockId, IrBuilder, IrOp, IrTerminator, TypeId, VRegId};
 
 use crate::lower::{lower_stmt, Binding, FnCtx, LowerCtx};
 
 use super::lower_expr;
-use super::fn_infer;
 
 pub fn lower_fn_expr(
     e: &crate::ast::Expr,
     params: &[(String, Option<crate::ast::Ty>)],
     body: &[crate::ast::Stmt],
     tail: &Option<Box<crate::ast::Expr>>,
-    expect: Option<TypeId>,
     ctx: &mut LowerCtx,
     b: &mut IrBuilder,
 ) -> Result<(VRegId, TypeId), CompileError> {
-    let expect_tid = if let Some(t) = expect {
-        t
-    } else if let Some((self_name, _)) = ctx.pending_fn_self.clone() {
-        // If we're lowering `let f = fn(...) { ... }` without an explicit annotation,
-        // `lower_stmt` should have set `pending_fn_self` so we can infer a signature here.
-        let (fun_tid, _args, _ret) =
-            fn_infer::infer_fn_type_for_let(self_name.as_str(), params, body, tail, ctx)?;
-        fun_tid
-    } else {
-        return Err(CompileError::new(
-            ErrorKind::Type,
-            e.span,
-            "function literal requires a type annotation.\nhelp: annotate the let binding, e.g. `let f: (I32, I32) -> I32 = fn(x, y) { ... };`",
-        ));
-    };
+    let expect_tid = ctx
+        .sem_expr_types
+        .get(&NodeId(e.span))
+        .copied()
+        .ok_or_else(|| {
+            CompileError::new(
+                ErrorKind::Internal,
+                e.span,
+                "missing semantic type for function literal",
+            )
+        })?;
 
-    let te = ctx
-        .type_ctx
-        .types
-        .get(expect_tid as usize)
-        .ok_or_else(|| CompileError::new(ErrorKind::Internal, e.span, "bad function type id"))?;
+    let te =
+        ctx.type_ctx.types.get(expect_tid as usize).ok_or_else(|| {
+            CompileError::new(ErrorKind::Internal, e.span, "bad function type id")
+        })?;
     if te.kind != crate::jlyb::TypeKind::Function {
         return Err(CompileError::new(
             ErrorKind::Type,
@@ -92,9 +84,16 @@ pub fn lower_fn_expr(
         ));
     }
 
-    // Logical index: 0=native, 1..4=prelude, 5=main, 6+=nested. Add 1 for native slot.
-    let func_index =
-        crate::jlyb::PRELUDE_FUN_COUNT + 1 + ctx.user_top_level_fun_count + (ctx.nested_funcs.len() as u32);
+    // Logical index: 0,1=native, 2..=5=prelude, 6=main, 7+=nested. Must not overlap with prelude.
+    //
+    // IMPORTANT: use a monotonic counter; `nested_funcs.len()` is not safe because we can lower
+    // a nested lambda while its parent lambda is still being built (and thus not yet pushed).
+    let func_index = crate::jlyb::NATIVE_BUILTIN_COUNT
+        + crate::jlyb::PRELUDE_FUN_COUNT
+        + 1
+        + ctx.user_top_level_fun_count
+        + ctx.next_nested_fun_index;
+    ctx.next_nested_fun_index += 1;
     let mut fb = IrBuilder::new(Some(format!("lambda{}", func_index)));
     fb.func.param_count = params.len() as u8;
 
@@ -109,7 +108,6 @@ pub fn lower_fn_expr(
         captures: HashMap::new(),
         capture_order: Vec::new(),
         self_name: ctx.pending_fn_self.as_ref().map(|(n, _)| n.clone()),
-        self_func_index: ctx.pending_fn_self.as_ref().map(|_| func_index),
         self_fun_tid: ctx.pending_fn_self.as_ref().map(|(_, tid)| *tid),
         self_loop_head: BlockId(0),
     }];
@@ -118,28 +116,44 @@ pub fn lower_fn_expr(
     for (i, (name, _ann)) in params.iter().enumerate() {
         let tid = sig_args[i];
         let v = fb.new_vreg(tid);
-        ctx.env_stack
-            .last_mut()
-            .expect("env stack")
-            .insert(name.clone(), Binding { v, tid });
+        ctx.env_stack.last_mut().expect("env stack").insert(
+            name.clone(),
+            Binding {
+                v,
+                tid,
+                func_index: None,
+            },
+        );
     }
 
     // Recursion sugar for `let f: T = fn(...) { ... f(...) ... }`:
     // inside the function body, bind `f` to a `CONST_FUN` of the function itself.
     if let Some((self_name, self_tid)) = ctx.pending_fn_self.clone() {
-        if self_tid == expect_tid {
-            let env = ctx.env_stack.last_mut().expect("env stack");
-            if !env.contains_key(&self_name) {
-                let vself = fb.new_vreg(expect_tid);
-                fb.emit(e.span, IrOp::ConstFun {
+        if self_tid != expect_tid {
+            return Err(CompileError::new(
+                ErrorKind::Internal,
+                e.span,
+                "semantic type mismatch for self-recursive fn literal",
+            ));
+        }
+        let env = ctx.env_stack.last_mut().expect("env stack");
+        if !env.contains_key(&self_name) {
+            let vself = fb.new_vreg(expect_tid);
+            fb.emit(
+                e.span,
+                IrOp::ConstFun {
                     dst: vself,
                     func_index,
-                });
-                env.insert(self_name, Binding {
+                },
+            );
+            env.insert(
+                self_name,
+                Binding {
                     v: vself,
                     tid: expect_tid,
-                });
-            }
+                    func_index: Some(func_index),
+                },
+            );
         }
     }
 
@@ -173,11 +187,7 @@ pub fn lower_fn_expr(
             }
             fb.term(IrTerminator::Ret { value: v });
         } else {
-            return Err(CompileError::new(
-                ErrorKind::Type,
-                e.span,
-                "missing return",
-            ));
+            return Err(CompileError::new(ErrorKind::Type, e.span, "missing return"));
         }
     }
 
@@ -189,10 +199,9 @@ pub fn lower_fn_expr(
     let mut cap_slots: Vec<VRegId> = Vec::new();
     let mut cap_srcs: Vec<Binding> = Vec::new();
     for name in &fcx.capture_order {
-        let (ob, slot) = *fcx
-            .captures
-            .get(name)
-            .ok_or_else(|| CompileError::new(ErrorKind::Internal, e.span, "missing capture entry"))?;
+        let (ob, slot) = *fcx.captures.get(name).ok_or_else(|| {
+            CompileError::new(ErrorKind::Internal, e.span, "missing capture entry")
+        })?;
         cap_slots.push(slot);
         cap_srcs.push(ob);
     }
@@ -207,23 +216,41 @@ pub fn lower_fn_expr(
     // Emit the function value in the outer function.
     let out = b.new_vreg(expect_tid);
     if cap_srcs.is_empty() {
-        b.emit(e.span, IrOp::ConstFun {
-            dst: out,
-            func_index,
-        });
+        ctx.last_const_fun_index = Some(func_index);
+        if let Some((nom_tid, atom_id)) = ctx.recording_method.take() {
+            ctx.method_table.insert((nom_tid, atom_id), func_index);
+        }
+        b.emit(
+            e.span,
+            IrOp::ConstFun {
+                dst: out,
+                func_index,
+            },
+        );
     } else {
         // Marshal captures into a contiguous vreg window so `CLOSURE` can box them.
         let cap_sig_args: Vec<TypeId> = cap_srcs.iter().map(|bd| bd.tid).collect();
-        let cap_sig_id = ctx.type_ctx.intern_sig(super::super::T_DYNAMIC, &cap_sig_args);
+        let cap_sig_id = ctx
+            .type_ctx
+            .intern_sig(super::super::T_DYNAMIC, &cap_sig_args);
 
         let cap_base = b.new_vreg(cap_srcs[0].tid);
-        b.emit(e.span, IrOp::Mov {
-            dst: cap_base,
-            src: cap_srcs[0].v,
-        });
+        b.emit(
+            e.span,
+            IrOp::Mov {
+                dst: cap_base,
+                src: cap_srcs[0].v,
+            },
+        );
         for bd in &cap_srcs[1..] {
             let slot = b.new_vreg(bd.tid);
-            b.emit(e.span, IrOp::Mov { dst: slot, src: bd.v });
+            b.emit(
+                e.span,
+                IrOp::Mov {
+                    dst: slot,
+                    src: bd.v,
+                },
+            );
         }
         b.emit(
             e.span,

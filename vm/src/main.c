@@ -28,11 +28,30 @@
  */
 
 #include <jelly.h>
+#include <jelly/internal/vm_internal.h>
 
 #include <errno.h>
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+
+#if defined(__APPLE__) || defined(__linux__) || defined(__FreeBSD__)
+#  define JELLY_HAVE_CLOCK_GETTIME 1
+#endif
+
+#ifdef JELLY_HAVE_CLOCK_GETTIME
+static double now_ms(void) {
+	struct timespec ts;
+	if(clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return 0.0;
+	return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1e6;
+}
+#else
+static double now_ms(void) {
+	return 0.0;
+}
+#endif
 
 static uint64_t parse_u64_env(const char* key, uint64_t def) {
 	const char* s = getenv(key);
@@ -88,16 +107,23 @@ int main(int argc, char** argv) {
 	}
 
 	const char* path = argv[1];
+	const uint8_t profile = (getenv("JELLY_PROFILE") != NULL);
+	double t0 = 0.0, t_read = 0.0, t_bc = 0.0, t_vm_create = 0.0, t_exec = 0.0;
+
+	if(profile) t0 = now_ms();
 	size_t size = 0;
 	uint8_t* data = read_file(path, &size);
 	if(!data) {
 		fprintf(stderr, "error: failed to read '%s': %s\n", path, strerror(errno));
 		return 2;
 	}
+	if(profile) t_read = now_ms() - t0;
 
+	if(profile) t0 = now_ms();
 	jelly_bc_module* m = NULL;
 	jelly_bc_result r = jelly_bc_read(data, size, &m);
 	free(data);
+	if(profile) t_bc = now_ms() - t0;
 	if(r.err != JELLY_BC_OK) {
 		fprintf(stderr, "error: bytecode load failed: err=%d msg=%s offset=%zu\n",
 		        (int)r.err,
@@ -106,7 +132,9 @@ int main(int argc, char** argv) {
 		return 2;
 	}
 
+	if(profile) t0 = now_ms();
 	jelly_vm* vm = jelly_vm_create();
+	if(profile) t_vm_create = now_ms() - t0;
 	if (!vm) {
 		fprintf(stderr, "error: failed to create VM\n");
 		jelly_bc_free(m);
@@ -129,8 +157,15 @@ int main(int argc, char** argv) {
 		jelly_vm_set_max_array_len(vm, (uint32_t)v);
 	}
 
+	if(profile) t0 = now_ms();
 	jelly_value out = jelly_make_null();
 	jelly_exec_status st = jelly_vm_exec_status(vm, m, &out);
+	if(profile) t_exec = now_ms() - t0;
+	if(profile) {
+		fprintf(stderr, "JELLY_PROFILE read_file=%.2f bc_read=%.2f vm_create=%.2f exec=%.2f (ms)\n",
+		        t_read, t_bc, t_vm_create, t_exec);
+	}
+
 	if(st == JELLY_EXEC_TRAP) {
 		fprintf(stderr, "trap: code=%d msg=%s\n",
 		        (int)jelly_vm_last_trap_code(vm),
@@ -141,7 +176,6 @@ int main(int argc, char** argv) {
 	}
 
 	// For now, print the boxed return value in a minimal way.
-	// (If it is not representable as i32/bool/atom/null, print a placeholder.)
 	if(jelly_is_null(out)) {
 		puts("null");
 	} else if(jelly_is_bool(out)) {
@@ -150,6 +184,14 @@ int main(int argc, char** argv) {
 		printf("%d\n", jelly_as_i32(out));
 	} else if(jelly_is_atom(out)) {
 		printf("atom(%u)\n", jelly_as_atom(out));
+	} else if(jelly_is_box_i64(out)) {
+		printf("%" PRId64 "\n", jelly_as_box_i64(out));
+	} else if(jelly_is_box_f64(out)) {
+		printf("%g\n", jelly_as_box_f64(out));
+	} else if(jelly_is_box_f32(out)) {
+		printf("%g\n", (double)jelly_as_box_f32(out));
+	} else if(jelly_is_box_f16(out)) {
+		printf("%g\n", (double)vm_f16_bits_to_f32(jelly_as_box_f16(out)));
 	} else if(jelly_is_ptr(out)) {
 		const jelly_obj_header* h = jelly_obj_header_of(out);
 		if(h && h->kind == (uint32_t)JELLY_OBJ_BYTES) {

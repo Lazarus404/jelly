@@ -60,6 +60,11 @@ void jelly_gc_init(struct jelly_vm* vm) {
 
 void jelly_gc_shutdown(struct jelly_vm* vm) {
   if(!vm) return;
+  /* Clear roots that may point into the heap; otherwise the next run's GC
+   * could trace dangling pointers (use-after-free). */
+  vm->spill_len = 0;
+  /* Invalidate frame cache (frame_layouts_mod may point to a freed module). */
+  vm_frame_cache_shutdown(vm);
   // Free everything on the GC heap (best-effort).
   jelly_gc_hdr* h = (jelly_gc_hdr*)vm->gc_objects;
   while(h) {
@@ -164,7 +169,9 @@ static void trace_object(mark_stack* ms, void* p) {
     case JELLY_OBJ_FUNCTION: {
       const jelly_function* f = (const jelly_function*)p;
       mark_val(ms, f->bound_this);
-      for(uint32_t i = 0; i < f->ncaps; i++) mark_val(ms, f->caps[i]);
+      if(!f->caps_are_raw) {
+        for(uint32_t i = 0; i < f->ncaps; i++) mark_val(ms, f->caps[i]);
+      }
       return;
     }
     case JELLY_OBJ_ABSTRACT:

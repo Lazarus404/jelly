@@ -57,6 +57,8 @@ op_result op_const_fun(exec_ctx* ctx, const jelly_insn* ins);
 
 op_result op_call(exec_ctx* ctx, const jelly_insn* ins);
 op_result op_callr(exec_ctx* ctx, const jelly_insn* ins);
+op_result op_tailcall(exec_ctx* ctx, const jelly_insn* ins);
+op_result op_tailcallr(exec_ctx* ctx, const jelly_insn* ins);
 op_result op_closure(exec_ctx* ctx, const jelly_insn* ins);
 op_result op_bind_this(exec_ctx* ctx, const jelly_insn* ins);
 
@@ -170,7 +172,7 @@ op_result op_dispatch(exec_ctx* ctx, const jelly_insn* ins) {
   /* Computed goto: often 10-20% faster than switch on hot dispatch. */
   static const void* const op_table[128] = {
     [JOP_NOP] = &&L_NOP, [JOP_RET] = &&L_RET, [JOP_MOV] = &&L_MOV, [JOP_CALL] = &&L_CALL,
-    [JOP_CALLR] = &&L_CALLR, [JOP_CONST_I32] = &&L_CONST_I32, [JOP_CONST_BOOL] = &&L_CONST_BOOL,
+    [JOP_CALLR] = &&L_CALLR, [JOP_TAILCALL] = &&L_TAILCALL, [JOP_TAILCALLR] = &&L_TAILCALLR, [JOP_CONST_I32] = &&L_CONST_I32, [JOP_CONST_BOOL] = &&L_CONST_BOOL,
     [JOP_CONST_ATOM] = &&L_CONST_ATOM, [JOP_CONST_FUN] = &&L_CONST_FUN, [JOP_CONST_NULL] = &&L_CONST_NULL,
     [JOP_CONST_F32] = &&L_CONST_F32, [JOP_CONST_F16] = &&L_CONST_F16, [JOP_CONST_I64] = &&L_CONST_I64, [JOP_CONST_F64] = &&L_CONST_F64,
     [JOP_CONST_I8_IMM] = &&L_CONST_I8_IMM,
@@ -257,7 +259,11 @@ L_RET: {
   if(caller->f->reg_types[caller_dst] == ret_tid) {
     jelly_type_kind k = m->types[ret_tid].kind;
     size_t sz = jelly_slot_size(k);
-    memmove(vm_reg_ptr(&caller->rf, caller_dst), vm_reg_ptr(&fr->rf, ins->a), sz);
+    uint8_t* dst = (uint8_t*)vm_reg_ptr(&caller->rf, caller_dst);
+    const uint8_t* src = (const uint8_t*)vm_reg_ptr(&fr->rf, ins->a);
+    if(sz == 4u) *(uint32_t*)dst = *(const uint32_t*)src;
+    else if(sz == 8u) *(uint64_t*)dst = *(const uint64_t*)src;
+    else memmove(dst, src, sz);
     vm_rf_release(vm, &fr->rf);
     vm->call_frames_len--;
     return OP_CONTINUE;
@@ -273,15 +279,20 @@ L_MOV: {
   const jelly_bc_module* m = ctx->m;
   call_frame* fr = ctx->fr;
   const jelly_bc_function* f = ctx->f;
-  const jelly_type_entry* types = m->types;
   uint32_t a = ins->a, b = ins->b;
-  jelly_type_kind k = types[f->reg_types[a]].kind;
+  jelly_type_kind k = m->types[f->reg_types[a]].kind;
   size_t sz = jelly_slot_size(k);
-  memmove(vm_reg_ptr(&fr->rf, a), vm_reg_ptr(&fr->rf, b), sz);
+  uint8_t* dst = (uint8_t*)vm_reg_ptr(&fr->rf, a);
+  const uint8_t* src = (const uint8_t*)vm_reg_ptr(&fr->rf, b);
+  if(sz == 4u) *(uint32_t*)dst = *(const uint32_t*)src;
+  else if(sz == 8u) *(uint64_t*)dst = *(const uint64_t*)src;
+  else memmove(dst, src, sz);
   return OP_CONTINUE;
 }
 L_CALL: return op_call(ctx, ins);
 L_CALLR: return op_callr(ctx, ins);
+L_TAILCALL: return op_tailcall(ctx, ins);
+L_TAILCALLR: return op_tailcallr(ctx, ins);
 L_CONST_I32: {
   vm_store_u32(&ctx->fr->rf, ins->a, ins->imm);
   return OP_CONTINUE;
@@ -466,6 +477,8 @@ L_PANIC: return op_panic(ctx, ins);
     case JOP_MOV: return op_mov(ctx, ins);
     case JOP_CALL: return op_call(ctx, ins);
     case JOP_CALLR: return op_callr(ctx, ins);
+    case JOP_TAILCALL: return op_tailcall(ctx, ins);
+    case JOP_TAILCALLR: return op_tailcallr(ctx, ins);
     case JOP_CONST_I32: return op_const_i32(ctx, ins);
     case JOP_CONST_BOOL: return op_const_bool(ctx, ins);
     case JOP_CONST_ATOM: return op_const_atom(ctx, ins);

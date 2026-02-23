@@ -1,8 +1,7 @@
-let arr: Array<I32> = Array.new<I32>(4);
-let idx: I8 = 1;
+let arr = Array.new<I32>(4);
+let idx: i8 = 1;
 arr[idx] = 41;
 arr[2] = 1;
-let j: I32 = arr[idx] + arr[2];
+let j = arr[idx] + arr[2];
 System.assert(j == 42);
 "ok"
-

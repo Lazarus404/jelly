@@ -47,6 +47,7 @@ struct jelly_bc_module {
   uint32_t natoms;
   const char* atoms_data;
   const char* const* atoms;
+  uint8_t proto_enabled; /* 1 if __proto__ atom exists and enables prototype chain */
   uint32_t nconst_i64;
   const int64_t* const_i64;
   uint32_t nconst_f64;
@@ -94,7 +95,13 @@ struct jelly_vm {
   void* frame_layouts; /* frame_layout[] (len = m->nfuncs) for running_module */
   uint32_t frame_layouts_len;
   const jelly_bc_module* frame_layouts_mod;
-  void* rf_free_list; /* rf_mem_block* */
+#define RF_POOL_BUCKETS 64u
+  void* rf_free_by_size[64]; /* rf_mem_block* per size bucket for O(1) alloc */
+
+  /* Contiguous frame stack: avoids per-call malloc for hot path. */
+  uint8_t* frame_stack;
+  uint32_t frame_stack_top;
+  uint32_t frame_stack_cap;
 
   const jelly_bc_module* running_module;
 
@@ -120,6 +127,7 @@ typedef struct frame_layout {
   uint32_t nregs;
   uint32_t total;
   uint32_t* off;
+  uint8_t has_pointer_or_dynamic; /* 1 if any reg needs init (Dynamic or pointer type) */
 } frame_layout;
 
 typedef struct rf_mem_block {
@@ -167,25 +175,47 @@ void jelly_vm_panic(void);
 
 /* --- reg.c --- */
 jelly_type_kind vm_reg_kind(const jelly_bc_module* m, const jelly_bc_function* f, uint32_t r);
-void* vm_reg_ptr(reg_frame* rf, uint32_t r);
-uint32_t vm_load_u32(reg_frame* rf, uint32_t r);
-void vm_store_u32(reg_frame* rf, uint32_t r, uint32_t v);
-void vm_store_u32_masked(reg_frame* rf, uint32_t r, uint32_t v, jelly_type_kind k);
+static inline void* vm_reg_ptr(reg_frame* rf, uint32_t r) {
+  return (void*)(rf->mem + rf->off[r]);
+}
+static inline uint32_t vm_load_u32(reg_frame* rf, uint32_t r) {
+  return *(const uint32_t*)vm_reg_ptr(rf, r);
+}
+static inline void vm_store_u32(reg_frame* rf, uint32_t r, uint32_t v) {
+  *(uint32_t*)vm_reg_ptr(rf, r) = v;
+}
+static inline void vm_store_u32_masked(reg_frame* rf, uint32_t r, uint32_t v, jelly_type_kind k) {
+  if(k == JELLY_T_I8) v = (uint32_t)(int32_t)(int8_t)(v & 0xFFu);
+  else if(k == JELLY_T_I16) v = (uint32_t)(int32_t)(int16_t)(v & 0xFFFFu);
+  vm_store_u32(rf, r, v);
+}
 float vm_load_f32(reg_frame* rf, uint32_t r);
 void vm_store_f32(reg_frame* rf, uint32_t r, float v);
 int32_t vm_load_i32ish(reg_frame* rf, uint32_t r);
 int64_t vm_load_i64(reg_frame* rf, uint32_t r);
 void vm_store_i64(reg_frame* rf, uint32_t r, int64_t v);
-double vm_load_f64(reg_frame* rf, uint32_t r);
-void vm_store_f64(reg_frame* rf, uint32_t r, double v);
+static inline double vm_load_f64(reg_frame* rf, uint32_t r) {
+  return *(const double*)vm_reg_ptr(rf, r);
+}
+static inline void vm_store_f64(reg_frame* rf, uint32_t r, double v) {
+  *(double*)vm_reg_ptr(rf, r) = v;
+}
 uint16_t vm_load_f16_bits(reg_frame* rf, uint32_t r);
 void vm_store_f16_bits(reg_frame* rf, uint32_t r, uint16_t bits);
 float vm_f16_bits_to_f32(uint16_t bits);
 uint16_t vm_f32_to_f16_bits(float f);
-jelly_value vm_load_val(reg_frame* rf, uint32_t r);
-void vm_store_val(reg_frame* rf, uint32_t r, jelly_value v);
-void* vm_load_ptr(reg_frame* rf, uint32_t r);
-void vm_store_ptr(reg_frame* rf, uint32_t r, void* p);
+static inline jelly_value vm_load_val(reg_frame* rf, uint32_t r) {
+  return *(const jelly_value*)vm_reg_ptr(rf, r);
+}
+static inline void vm_store_val(reg_frame* rf, uint32_t r, jelly_value v) {
+  *(jelly_value*)vm_reg_ptr(rf, r) = v;
+}
+static inline void* vm_load_ptr(reg_frame* rf, uint32_t r) {
+  return *(void* const*)vm_reg_ptr(rf, r);
+}
+static inline void vm_store_ptr(reg_frame* rf, uint32_t r, void* p) {
+  *(void**)vm_reg_ptr(rf, r) = p;
+}
 
 /* --- spill.c --- */
 void vm_spill_push(jelly_vm* vm, jelly_value v);
@@ -198,6 +228,9 @@ int vm_checked_f64_to_i32(jelly_vm* vm, double x, uint32_t* out_u32);
 int vm_checked_f64_to_i64(jelly_vm* vm, double x, int64_t* out_i64);
 uint32_t vm_kindof_dynamic(jelly_value v);
 uint32_t vm_expected_obj_kind_for_typed_ptr(jelly_type_kind k);
+
+/* --- frame.c (type helpers) --- */
+uint8_t vm_type_is_nonptr(jelly_type_kind k);
 
 /* --- call.c --- */
 void vm_copy_arg_strict(const jelly_bc_module* m,
@@ -216,9 +249,12 @@ void vm_frame_cache_shutdown(jelly_vm* vm);
 int vm_push_frame(jelly_vm* vm, const jelly_bc_module* m, const jelly_bc_function* callee_f,
                   const jelly_bc_function* caller_f, uint32_t caller_frame_index, uint32_t caller_dst,
                   uint32_t first_arg, uint32_t nargs, const jelly_function* funobj, uint8_t has_caller);
+int vm_replace_frame(jelly_vm* vm, const jelly_bc_module* m, const jelly_bc_function* callee_f,
+                     const jelly_bc_function* caller_f, uint32_t first_arg, uint32_t nargs,
+                     const jelly_function* funobj);
 
 /* --- ops/ops_builtins.c --- */
-#define JELLY_NATIVE_BUILTIN_COUNT 1u
+#define JELLY_NATIVE_BUILTIN_COUNT 4u
 int jelly_is_native_builtin(uint32_t func_index);
 void jelly_invoke_native_builtin(exec_ctx* ctx, const jelly_insn* ins, uint32_t func_index, uint32_t first_arg_reg);
 

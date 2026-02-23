@@ -1,0 +1,9 @@
+let b = "abcd";
+let x = Bytes.slice(b, 1, 2);
+let r = if (Bytes.len(x) == 2 && Bytes.get_u8(x, 0) == 98 && Bytes.get_u8(x, 1) == 99) {
+  "ok"
+} else {
+  "bad"
+};
+System.assert(r == "ok");
+r

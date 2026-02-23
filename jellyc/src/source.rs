@@ -26,7 +26,6 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  */
-
 use crate::ast::Span;
 
 /// Source code for a file.
@@ -116,3 +115,41 @@ impl<'a> Source<'a> {
     }
 }
 
+/// Centralized diagnostic rendering for a single source file.
+///
+/// This keeps formatting (line/col lookup + caret rendering) out of error/warning types.
+pub struct DiagEmitter<'a> {
+    src: Source<'a>,
+    path: Option<&'a str>,
+}
+
+impl<'a> DiagEmitter<'a> {
+    pub fn new(text: &'a str, path: Option<&'a str>) -> Self {
+        Self {
+            src: Source::new(text),
+            path,
+        }
+    }
+
+    pub fn render_error(&self, kind_label: &str, span: Span, message: &str) -> String {
+        let (line, col, src_line, caret) = self.src.render_span(span);
+
+        let loc = match self.path {
+            Some(p) => format!("{}:{}:{}", p, line, col),
+            None => format!("{}:{}", line, col),
+        };
+
+        format!("{kind_label}: {message}\n --> {loc}\n{src_line}\n{caret}")
+    }
+
+    pub fn render_warning(&self, span: Span, message: &str) -> String {
+        let (line, col, src_line, caret) = self.src.render_span(span);
+
+        let loc = match self.path {
+            Some(p) => format!("{}:{}:{}", p, line, col),
+            None => format!("{}:{}", line, col),
+        };
+
+        format!("warning: {message}\n --> {loc}\n{src_line}\n{caret}")
+    }
+}

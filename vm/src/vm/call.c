@@ -89,8 +89,19 @@ void vm_init_args_and_caps(jelly_vm* vm, const jelly_bc_module* m,
               (unsigned)callee_f->cap_start);
     }
     if(cap_start < arg_base + nargs) jelly_vm_panic();
-    for(uint32_t i = 0; i < funobj->ncaps; i++) {
-      vm_store_from_boxed(m, callee_f, callee_rf, cap_start + i, funobj->caps[i]);
+    if(funobj->caps_are_raw) {
+      const uint8_t* raw = (const uint8_t*)&funobj->caps[0];
+      uint32_t off = 0;
+      for(uint32_t i = 0; i < funobj->ncaps; i++) {
+        jelly_type_kind k = m->types[callee_f->reg_types[cap_start + i]].kind;
+        size_t sz = jelly_slot_size(k);
+        memcpy(callee_rf->mem + callee_rf->off[cap_start + i], raw + off, sz);
+        off += (uint32_t)sz;
+      }
+    } else {
+      for(uint32_t i = 0; i < funobj->ncaps; i++) {
+        vm_store_from_boxed(m, callee_f, callee_rf, cap_start + i, funobj->caps[i]);
+      }
     }
   }
 }

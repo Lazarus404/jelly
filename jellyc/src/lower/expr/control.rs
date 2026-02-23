@@ -26,17 +26,14 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  */
-
 // Control-flow expression lowering (block, if, try).
-
-use std::collections::HashMap;
-
 use crate::error::{CompileError, ErrorKind};
 use crate::ir::{IrBuilder, IrOp, IrTerminator, TypeId, VRegId};
 
 use crate::lower::{lower_stmt, Binding, LowerCtx};
 
 use super::lower_expr;
+use super::lower_truthy;
 use super::T_BOOL;
 use super::T_DYNAMIC;
 
@@ -46,13 +43,12 @@ pub fn lower_block_expr(
     ctx: &mut LowerCtx,
     b: &mut IrBuilder,
 ) -> Result<(VRegId, TypeId), CompileError> {
-    ctx.env_stack.push(HashMap::new());
-    for st in stmts {
-        lower_stmt(st, ctx, b)?;
-    }
-    let out = lower_expr(expr, ctx, b)?;
-    ctx.env_stack.pop();
-    Ok(out)
+    ctx.with_env_scope(|ctx| {
+        for st in stmts {
+            lower_stmt(st, ctx, b)?;
+        }
+        lower_expr(expr, ctx, b)
+    })
 }
 
 pub fn lower_if_expr(
@@ -64,9 +60,11 @@ pub fn lower_if_expr(
     b: &mut IrBuilder,
 ) -> Result<(VRegId, TypeId), CompileError> {
     let (v_cond, t_cond) = lower_expr(cond, ctx, b)?;
-    if t_cond != T_BOOL {
-        return Err(CompileError::new(ErrorKind::Type, cond.span, "if condition must be bool"));
-    }
+    let v_cond = if t_cond == T_BOOL {
+        v_cond
+    } else {
+        lower_truthy(cond.span, v_cond, t_cond, ctx, b)?
+    };
 
     let then_b = b.new_block(Some("if_then".to_string()));
     let else_b = b.new_block(Some("if_else".to_string()));
@@ -175,15 +173,19 @@ pub fn lower_try_expr(
     b.term(IrTerminator::Jmp { target: join_b });
 
     b.set_block(catch_b);
-    ctx.env_stack.push(HashMap::new());
-    if let Some(n) = catch_name {
-        ctx.env_stack
-            .last_mut()
-            .expect("env stack")
-            .insert(n.clone(), Binding { v: v_exc, tid: T_DYNAMIC });
-    }
-    let (v_catch, t_catch) = lower_expr(catch_body, ctx, b)?;
-    ctx.env_stack.pop();
+    let (v_catch, t_catch) = ctx.with_env_scope(|ctx| {
+        if let Some(n) = catch_name {
+            ctx.env_stack.last_mut().expect("env stack").insert(
+                n.clone(),
+                Binding {
+                    v: v_exc,
+                    tid: T_DYNAMIC,
+                    func_index: None,
+                },
+            );
+        }
+        lower_expr(catch_body, ctx, b)
+    })?;
     if t_catch != t_body {
         return Err(CompileError::new(
             ErrorKind::Type,

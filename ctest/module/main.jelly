@@ -1,0 +1,7 @@
+import math as Math;
+import consts as C;
+
+let h: I32 = Math.add(C.x, 3);
+let r = if (h == 7) { "ok" } else { "bad" };
+System.assert(r == "ok");
+r

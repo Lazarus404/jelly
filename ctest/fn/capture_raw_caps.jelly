@@ -1,0 +1,13 @@
+// Raw-copy closure caps: multiple I32 captures use VM fast path (no boxing).
+// Exercises jelly_closure_new_raw and memcpy at call time.
+
+let make = fn() {
+  let a: I32 = 10;
+  let b: I32 = 20;
+  let add: () -> I32 = fn() { a + b };
+  let r: I32 = add();
+  System.assert(r == 30);
+  "ok"
+};
+
+make()

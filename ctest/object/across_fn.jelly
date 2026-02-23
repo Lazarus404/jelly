@@ -1,0 +1,5 @@
+let f: (Object) -> I32 = fn(o) { return o.a; };
+let o = { a: 7 };
+let r = if (f(o) == 7) { "ok" } else { "bad" };
+System.assert(r == "ok");
+r

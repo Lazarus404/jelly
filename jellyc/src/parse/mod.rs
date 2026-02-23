@@ -1,3 +1,7 @@
+//! Parser: tokens → AST.
+//!
+//! Entry point: `parse_program`. Uses recursive descent with `P` (token parser).
+
 /**
  * Copyright 2022 - Jahred Love
  *
@@ -26,20 +30,20 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  */
-
- mod expr;
+mod expr;
 mod pattern;
 mod stmt;
-mod ty;
 mod token_p;
+mod ty;
 
-use crate::ast::{Expr, Pattern, Program, Span, Stmt, Ty};
+use crate::ast::{Expr, ExprKind, Pattern, Program, Span, Stmt, StmtKind, Ty};
 use crate::error::{CompileError, ErrorKind};
 use crate::lex;
 use crate::token::TokenKind;
 
 pub use token_p::TokenP as P;
 
+#[allow(dead_code)] // Test fixtures: parse_let_if_program, parse_let_y_if_program, etc.
 impl P {
     fn skip_ws(&mut self) {
         // No-op: lexer already skips whitespace
@@ -92,6 +96,20 @@ impl P {
     }
 
     fn parse_program(&mut self) -> Result<Program, CompileError> {
+        // Try parsing a single let expression first (e.g. "let a = 1.1" or "let a = 1.1;" at EOF).
+        // This allows let to be used as an expression in REPL and elsewhere.
+        let save = self.i;
+        if let Ok(expr) = self.parse_expr() {
+            let _ = self.eat(TokenKind::Semicolon);
+            if self.eof() && matches!(&expr.node, ExprKind::Let { .. }) {
+                return Ok(Program {
+                    stmts: vec![],
+                    expr,
+                });
+            }
+        }
+        self.i = save;
+
         let mut stmts: Vec<Stmt> = Vec::new();
         loop {
             let s = self.parse_stmt()?;
@@ -101,9 +119,42 @@ impl P {
                 break;
             }
         }
-        let expr = self.parse_expr()?;
+        let mut expr = if self.eof() {
+            Expr::new(ExprKind::Null, Span::point(self.pos()))
+        } else {
+            self.parse_expr()?
+        };
+        // Allow optional trailing semicolon after final expression (e.g. "i + 3;" in REPL).
+        let _ = self.eat(TokenKind::Semicolon);
         if !self.eof() {
             return self.err("unexpected trailing input");
+        }
+        // When expr is Null and the last stmt is Let, treat that Let as the program expression
+        // so REPL prints its value (e.g. "let exit=...; let a=1.1;" -> expr = let a=1.1).
+        if matches!(expr.node, ExprKind::Null)
+            && stmts.last().map(|s| matches!(&s.node, StmtKind::Let { .. })) == Some(true)
+        {
+            let last = stmts.pop().expect("non-empty");
+            if let StmtKind::Let {
+                is_const,
+                name,
+                type_params,
+                ty,
+                expr: init,
+                ..
+            } = last.node
+            {
+                expr = Expr::new(
+                    ExprKind::Let {
+                        is_const,
+                        name,
+                        type_params,
+                        ty,
+                        expr: Box::new(init),
+                    },
+                    last.span,
+                );
+            }
         }
         Ok(Program { stmts, expr })
     }
@@ -136,7 +187,9 @@ impl P {
         Ok(parts)
     }
 
-    fn parse_let_if_program(&mut self) -> Result<(String, Vec<u8>, bool, Vec<u8>, Vec<u8>), CompileError> {
+    fn parse_let_if_program(
+        &mut self,
+    ) -> Result<(String, Vec<u8>, bool, Vec<u8>, Vec<u8>), CompileError> {
         if !self.eat(TokenKind::KwLet) {
             return self.err("expected 'let'");
         }
@@ -163,7 +216,10 @@ impl P {
             return self.err("unexpected trailing input");
         }
         if then_name != name || else_name != name {
-            return self.err_at(self.pos(), format!("expected branches to use variable '{}'", name));
+            return self.err_at(
+                self.pos(),
+                format!("expected branches to use variable '{}'", name),
+            );
         }
         Ok((name, init, cond, then_rhs, else_rhs))
     }
@@ -204,10 +260,16 @@ impl P {
             return self.err("unexpected trailing input");
         }
         if then_name != x || else_name != x {
-            return self.err_at(self.pos(), format!("expected if-branches to use variable '{}'", x));
+            return self.err_at(
+                self.pos(),
+                format!("expected if-branches to use variable '{}'", x),
+            );
         }
         if use_y != y {
-            return self.err_at(self.pos(), format!("expected trailing expression to use variable '{}'", y));
+            return self.err_at(
+                self.pos(),
+                format!("expected trailing expression to use variable '{}'", y),
+            );
         }
         Ok((init, cond, then_rhs, else_rhs, tail_rhs))
     }
@@ -232,4 +294,3 @@ pub fn parse_program(src: &str) -> Result<Program, CompileError> {
     let mut p = P::new(tokens);
     p.parse_program()
 }
-

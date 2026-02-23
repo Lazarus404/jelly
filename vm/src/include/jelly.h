@@ -346,6 +346,9 @@ typedef enum jelly_op {
   JOP_LT_I64 = 115,
   JOP_LT_F32 = 116,
   JOP_LT_F64 = 117,
+  /* Tail calls: replace current frame instead of pushing (proper tail recursion). */
+  JOP_TAILCALL = 118,
+  JOP_TAILCALLR = 119,
 } jelly_op;
 
 #define JELLY_ATOM___PROTO__ 0u
@@ -476,11 +479,15 @@ typedef struct jelly_function {
   uint32_t func_index;
   uint32_t ncaps;
   jelly_value bound_this;
-  jelly_value caps[];
+  uint8_t caps_are_raw;   /* 1 if trailing bytes are raw (no GC roots), 0 if jelly_value[] */
+  uint8_t _pad[3];
+  uint32_t raw_cap_size; /* when caps_are_raw: total bytes of raw capture data */
+  jelly_value caps[];   /* when !caps_are_raw; when caps_are_raw, raw bytes at same offset */
 } jelly_function;
 
 jelly_function* jelly_function_new(struct jelly_vm* vm, uint32_t type_id, uint32_t func_index);
 jelly_function* jelly_closure_new(struct jelly_vm* vm, uint32_t type_id, uint32_t func_index, uint32_t ncaps, const jelly_value* caps);
+jelly_function* jelly_closure_new_raw(struct jelly_vm* vm, uint32_t type_id, uint32_t func_index, uint32_t ncaps, uint32_t raw_cap_size, const uint8_t* raw_caps);
 jelly_function* jelly_function_bind_this(struct jelly_vm* vm, uint32_t type_id, const jelly_function* f, jelly_value bound_this);
 
 /* --- abstract.h --- */

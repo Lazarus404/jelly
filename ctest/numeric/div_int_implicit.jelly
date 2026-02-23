@@ -1,0 +1,10 @@
+// Implicit integer division: / with integer operands produces integer
+let a : I32 = 20;
+let b : I32 = 10;
+let q = b / a;
+let r = if (q == 0) { "ok" } else { "bad" };
+System.assert(r == "ok");
+let q2 = 7 / 2;
+let r2 = if (q2 == 3) { "ok" } else { "bad" };
+System.assert(r2 == "ok");
+"ok"

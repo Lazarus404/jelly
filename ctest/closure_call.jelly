@@ -1,0 +1,6 @@
+let inner: I32 -> I32 = fn(x) { return x + 1; };
+let outer: I32 -> I32 = fn(y) {
+  return inner(y);
+};
+let _ = outer(42);
+"ok"
