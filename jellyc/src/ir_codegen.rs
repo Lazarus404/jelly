@@ -1686,7 +1686,15 @@ mod tests {
         let entry_func = (m.entry as usize).saturating_sub(1);
         assert_eq!(m.const_bytes.len(), 1);
         assert!(!m.funcs[entry_func].insns.is_empty());
-        assert_eq!(m.funcs[entry_func].insns[0].op, Op::ConstBytes as u8);
+        // We may emit additional prologue ops (eg. global object materialization),
+        // but the function must still load the bytes constant and return it.
+        assert!(
+            m.funcs[entry_func]
+                .insns
+                .iter()
+                .any(|i| i.op == Op::ConstBytes as u8),
+            "expected ConstBytes in emitted bytecode"
+        );
         assert_eq!(m.funcs[entry_func].insns.last().unwrap().op, Op::Ret as u8);
     }
 
