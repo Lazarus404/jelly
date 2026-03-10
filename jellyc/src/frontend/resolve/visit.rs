@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright 2022 - Jahred Love
  *
  * Redistribution and use in source and binary forms, with or without modification,
@@ -170,12 +170,24 @@ impl Visitor for Resolver {
                 self.loop_depth -= 1;
                 Ok(())
             }
+            StmtKind::DoWhile { body, cond } => {
+                self.loop_depth += 1;
+                self.with_scope(|r| {
+                    for st in body {
+                        r.visit_stmt(st)?;
+                    }
+                    Ok(())
+                })?;
+                self.visit_expr(cond)?;
+                self.loop_depth -= 1;
+                Ok(())
+            }
             StmtKind::Break => {
                 if self.loop_depth == 0 {
                     return Err(CompileError::new(
                         ErrorKind::Name,
                         s.span,
-                        "break used outside of while",
+                        "break used outside of loop",
                     ));
                 }
                 Ok(())
@@ -185,7 +197,7 @@ impl Visitor for Resolver {
                     return Err(CompileError::new(
                         ErrorKind::Name,
                         s.span,
-                        "continue used outside of while",
+                        "continue used outside of loop",
                     ));
                 }
                 Ok(())

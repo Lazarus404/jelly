@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright 2022 - Jahred Love
  *
  * Redistribution and use in source and binary forms, with or without modification,
@@ -35,6 +35,9 @@ use super::helpers::expect_stmt_terminator;
 use super::P;
 
 pub(super) fn try_parse_control_stmt(p: &mut P) -> Result<Option<Stmt>, CompileError> {
+    if let Some(do_span) = p.eat_kw_span("do") {
+        return Ok(Some(parse_do_while_stmt(p, do_span)?));
+    }
     if let Some(while_span) = p.eat_kw_span("while") {
         return Ok(Some(parse_while_stmt(p, while_span)?));
     }
@@ -75,6 +78,25 @@ pub(super) fn try_parse_control_stmt(p: &mut P) -> Result<Option<Stmt>, CompileE
         )));
     }
     Ok(None)
+}
+
+fn parse_do_while_stmt(p: &mut P, do_span: Span) -> Result<Stmt, CompileError> {
+    let body = parse_block_stmts(p)?;
+    if p.eat_kw_span("while").is_none() {
+        return Err(CompileError::at(
+            ErrorKind::Parse,
+            p.pos(),
+            "expected 'while' after do block",
+        ));
+    }
+    p.expect_char('(')?;
+    let cond = p.parse_expr()?;
+    p.expect_char(')')?;
+    expect_stmt_terminator(p)?;
+    Ok(Stmt::new(
+        StmtKind::DoWhile { body, cond },
+        Span::new(do_span.start, p.last_span_end()),
+    ))
 }
 
 fn parse_while_stmt(p: &mut P, while_span: Span) -> Result<Stmt, CompileError> {

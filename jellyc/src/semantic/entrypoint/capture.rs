@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright 2022 - Jahred Love
  *
  * Redistribution and use in source and binary forms, with or without modification,
@@ -188,6 +188,15 @@ pub(super) fn capture_analysis(p: &Program, info: &SemanticInfo) -> HashMap<Node
                         self.visit_stmt(st)?;
                     }
                     self.pop_scope();
+                    Ok(())
+                }
+                StmtKind::DoWhile { body, cond } => {
+                    self.push_scope();
+                    for st in body {
+                        self.visit_stmt(st)?;
+                    }
+                    self.pop_scope();
+                    self.visit_expr(cond)?;
                     Ok(())
                 }
                 StmtKind::Prototype { .. } | StmtKind::Break | StmtKind::Continue => Ok(()),

@@ -34,6 +34,7 @@ pub(super) const KEYWORDS: &[(&str, TokenKind)] = &[
     ("const", TokenKind::KwConst),
     ("if", TokenKind::KwIf),
     ("else", TokenKind::KwElse),
+    ("do", TokenKind::KwDo),
     ("while", TokenKind::KwWhile),
     ("break", TokenKind::KwBreak),
     ("continue", TokenKind::KwContinue),

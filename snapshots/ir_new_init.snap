@@ -25,7 +25,7 @@ ir {
       v15: Bytes
     b0 (entry):
       @0..0 ObjNew { dst: v0 }
-      @36..122 ConstFun { dst: v2, func_index: 10 }
+      @36..122 ConstFun { dst: v2, func_index: 12 }
       @0..123 Mov { dst: v1, src: v2 }
       @136..150 ObjNew { dst: v3 }
       @136..150 ObjSetAtom { obj: v3, atom: "init", value: v1 }
@@ -48,14 +48,14 @@ ir {
       @242..263 Assert { cond: v14 }
       @265..269 ConstBytes { dst: v15, len: 2 }
       term: Ret { value: v15 }
-  fn[1] lambda10 params=2 entry=b0
+  fn[1] lambda12 params=2 entry=b0
     vregs:
       v0: Object
       v1: I32
       v2: (Object, I32) -> Object
       v3: Atom
     b0 (entry):
-      @36..122 ConstFun { dst: v2, func_index: 10 }
+      @36..122 ConstFun { dst: v2, func_index: 12 }
       term: Jmp { target: b1 }
     b1 (fn_body):
       @58..74 ConstAtom { dst: v3, atom: "a" }

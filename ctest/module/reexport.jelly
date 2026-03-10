@@ -1,0 +1,4 @@
+// Re-export: export imported binding (if supported)
+import {add} from math;
+export let add2: (I32, I32) -> I32 = add;
+"ok"

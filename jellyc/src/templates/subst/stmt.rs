@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright 2022 - Jahred Love
  *
  * Redistribution and use in source and binary forms, with or without modification,
@@ -96,6 +96,10 @@ pub(in crate::templates::subst) fn subst_stmt(s: &Stmt, subst: &HashMap<String, 
         StmtKind::While { cond, body } => StmtKind::While {
             cond: subst_expr(cond, subst),
             body: body.iter().map(|st| subst_stmt(st, subst)).collect(),
+        },
+        StmtKind::DoWhile { body, cond } => StmtKind::DoWhile {
+            body: body.iter().map(|st| subst_stmt(st, subst)).collect(),
+            cond: subst_expr(cond, subst),
         },
         StmtKind::Break => StmtKind::Break,
         StmtKind::Continue => StmtKind::Continue,

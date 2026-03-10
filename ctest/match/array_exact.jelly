@@ -1,0 +1,8 @@
+// Match array exact: [a, b] => {...} matches array of length 2
+let arr = [10, 20];
+let r = match (arr) {
+  [a, b] => a + b,
+  _ => 0,
+};
+System.assert(r == 30);
+"ok"

@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright 2022 - Jahred Love
  *
  * Redistribution and use in source and binary forms, with or without modification,
@@ -52,7 +52,9 @@ mod stmt;
 
 use crate::typectx::T_BYTES;
 use checker::{TypeChecker, TypecheckInputs};
-pub(in crate::semantic::typecheck) use numeric::{is_integer, is_numeric, join_numeric};
+pub(in crate::semantic::typecheck) use numeric::{
+    is_integer, is_narrowing_numeric, is_numeric, join_numeric,
+};
 
 pub fn typecheck_program(p: &Program) -> Result<SemanticInfo, CompileError> {
     let mut tc = TypeChecker::new(TypecheckInputs {

@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright 2022 - Jahred Love
  *
  * Redistribution and use in source and binary forms, with or without modification,
@@ -87,6 +87,7 @@ pub fn lower_stmt(
             assign::lower_index_assign_stmt(s, base, index, expr, ctx, b)
         }
         StmtKind::While { cond, body } => loop_::lower_while_stmt(s, cond, body, ctx, b),
+        StmtKind::DoWhile { body, cond } => loop_::lower_do_while_stmt(s, body, cond, ctx, b),
         StmtKind::Break => loop_::lower_break_stmt(s, ctx, b),
         StmtKind::Continue => loop_::lower_continue_stmt(s, ctx, b),
         StmtKind::Throw { expr } => term::lower_throw_stmt(s, expr, ctx, b),

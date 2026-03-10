@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright 2022 - Jahred Love
  *
  * Redistribution and use in source and binary forms, with or without modification,
@@ -51,8 +51,8 @@ pub(super) fn is_valid_builtin_member(ns: &str, name: &str) -> bool {
         "Atom" => matches!(name, "intern"),
         "Object" => matches!(name, "get" | "set"),
         "System" => matches!(name, "assert" | "exit"),
-        "Integer" => matches!(name, "to_i8" | "to_i16" | "to_i32" | "to_i64"),
-        "Float" => matches!(name, "to_f16" | "to_f32" | "to_f64"),
+        "Integer" => matches!(name, "to_i8" | "to_i16" | "to_i32" | "to_i64" | "to_bytes"),
+        "Float" => matches!(name, "to_f16" | "to_f32" | "to_f64" | "to_bytes" | "is_nan" | "is_infinite"),
         "Math" => matches!(name, "sqrt"),
         _ => true,
     }

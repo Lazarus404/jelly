@@ -1,0 +1,3 @@
+// Negative: implicit i32 -> i8 narrowing should produce type error
+let x: i8 = 256;
+"ok"

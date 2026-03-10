@@ -1,0 +1,9 @@
+// do..while with break (continue in do..while works but has codegen edge case - test separately)
+let n = 0;
+do {
+  n = n + 1;
+  break;
+} while (n < 1);
+System.assert(n == 1);
+
+"ok"

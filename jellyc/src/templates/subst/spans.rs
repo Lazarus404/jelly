@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright 2022 - Jahred Love
  *
  * Redistribution and use in source and binary forms, with or without modification,
@@ -49,6 +49,12 @@ pub(in crate::templates) fn subst_stmt_spans(
             for st in body {
                 subst_stmt_spans(st, shift_span);
             }
+        }
+        StmtKind::DoWhile { body, cond } => {
+            for st in body {
+                subst_stmt_spans(st, shift_span);
+            }
+            subst_expr_spans(cond, shift_span);
         }
         StmtKind::Return { expr } => {
             if let Some(e) = expr {

@@ -123,24 +123,44 @@ pub(super) fn namespace_constraints(
                 ret: T_F64,
             }))
         }
-        ("I32", "to_bytes") => {
-            no_targs("I32.to_bytes")?;
+        ("Integer", "to_bytes") => {
+            no_targs("Integer.to_bytes")?;
             if args_len != 1 {
-                return Err(err(span, "I32.to_bytes expects 1 arg"));
+                return Err(err(span, "Integer.to_bytes expects 1 arg"));
             }
             Ok(Some(BuiltinConstraints {
-                args: vec![ArgConstraint::Exact(T_I32)],
+                args: vec![ArgConstraint::Numeric],
                 ret: T_BYTES,
             }))
         }
-        ("F64", "to_bytes") => {
-            no_targs("F64.to_bytes")?;
+        ("Float", "to_bytes") => {
+            no_targs("Float.to_bytes")?;
             if args_len != 1 {
-                return Err(err(span, "F64.to_bytes expects 1 arg"));
+                return Err(err(span, "Float.to_bytes expects 1 arg"));
             }
             Ok(Some(BuiltinConstraints {
-                args: vec![ArgConstraint::Exact(T_F64)],
+                args: vec![ArgConstraint::Numeric],
                 ret: T_BYTES,
+            }))
+        }
+        ("Float", "is_nan") => {
+            no_targs("Float.is_nan")?;
+            if args_len != 1 {
+                return Err(err(span, "Float.is_nan expects 1 arg"));
+            }
+            Ok(Some(BuiltinConstraints {
+                args: vec![ArgConstraint::Numeric],
+                ret: T_BOOL,
+            }))
+        }
+        ("Float", "is_infinite") => {
+            no_targs("Float.is_infinite")?;
+            if args_len != 1 {
+                return Err(err(span, "Float.is_infinite expects 1 arg"));
+            }
+            Ok(Some(BuiltinConstraints {
+                args: vec![ArgConstraint::Numeric],
+                ret: T_BOOL,
             }))
         }
         ("Math", "sqrt") => {

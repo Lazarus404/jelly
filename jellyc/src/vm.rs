@@ -1,5 +1,5 @@
 #![cfg(feature = "embed-vm")]
-/**
+/*
  * Copyright 2022 - Jahred Love
  *
  * Redistribution and use in source and binary forms, with or without modification,

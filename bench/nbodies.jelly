@@ -101,7 +101,7 @@ let round9: F64 -> I32 = fn(e) {
   let scaled: F64 = e * 1000000000.0;
   // Match Lua: adj = (scaled < 0) ? scaled - 0.5 : scaled + 0.5; return trunc(adj)
   let adj: F64 = if (scaled < 0.0) { scaled - 0.5 } else { scaled + 0.5 };
-  let r: I32 = adj;
+  let r: I32 = Integer.to_i32(adj);
   return r;
 };
 

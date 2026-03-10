@@ -1,0 +1,14 @@
+// do..while: body runs at least once before condition is checked
+let n = 0;
+do {
+  n = n + 1;
+} while (n < 1);
+System.assert(n == 1);
+
+let m = 0;
+do {
+  m = m + 1;
+} while (m < 3);
+System.assert(m == 3);
+
+"ok"

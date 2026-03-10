@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright 2022 - Jahred Love
  *
  * Redistribution and use in source and binary forms, with or without modification,
@@ -49,6 +49,7 @@ pub enum TokenKind {
     KwConst,
     KwIf,
     KwElse,
+    KwDo,
     KwWhile,
     KwBreak,
     KwContinue,
@@ -145,6 +146,7 @@ impl Token {
                 | TokenKind::KwConst
                 | TokenKind::KwIf
                 | TokenKind::KwElse
+                | TokenKind::KwDo
                 | TokenKind::KwWhile
                 | TokenKind::KwBreak
                 | TokenKind::KwContinue
@@ -183,6 +185,7 @@ impl Token {
             TokenKind::KwConst => Some("const".to_string()),
             TokenKind::KwIf => Some("if".to_string()),
             TokenKind::KwElse => Some("else".to_string()),
+            TokenKind::KwDo => Some("do".to_string()),
             TokenKind::KwWhile => Some("while".to_string()),
             TokenKind::KwBreak => Some("break".to_string()),
             TokenKind::KwContinue => Some("continue".to_string()),

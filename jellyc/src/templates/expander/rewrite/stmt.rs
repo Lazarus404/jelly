@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright 2022 - Jahred Love
  *
  * Redistribution and use in source and binary forms, with or without modification,
@@ -102,6 +102,13 @@ impl Expander {
                     .iter()
                     .map(|st| self.rewrite_stmt(st))
                     .collect::<Result<_, _>>()?,
+            },
+            StmtKind::DoWhile { body, cond } => StmtKind::DoWhile {
+                body: body
+                    .iter()
+                    .map(|st| self.rewrite_stmt(st))
+                    .collect::<Result<_, _>>()?,
+                cond: self.rewrite_expr(cond)?,
             },
             StmtKind::Break => StmtKind::Break,
             StmtKind::Continue => StmtKind::Continue,

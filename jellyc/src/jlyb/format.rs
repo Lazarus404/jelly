@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright 2022 - Jahred Love
  *
  * Redistribution and use in source and binary forms, with or without modification,
@@ -46,7 +46,9 @@ pub const NATIVE_BUILTIN_MATH_SQRT: u32 = 0;
 pub const NATIVE_BUILTIN_SYSTEM_EXIT: u32 = 1;
 pub const NATIVE_BUILTIN_I32_TO_BYTES: u32 = 2;
 pub const NATIVE_BUILTIN_F64_TO_BYTES: u32 = 3;
-pub const NATIVE_BUILTIN_COUNT: u32 = 4;
+pub const NATIVE_BUILTIN_F64_IS_NAN: u32 = 4;
+pub const NATIVE_BUILTIN_F64_IS_INFINITE: u32 = 5;
+pub const NATIVE_BUILTIN_COUNT: u32 = 6;
 
 // Prelude (bytecode) function indices. Logical index = NATIVE_BUILTIN_COUNT + prelude_offset.
 // Only include prelude funcs that are used. Keep in sync with `prelude_funcs_for_program()`.

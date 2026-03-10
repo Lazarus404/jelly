@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright 2022 - Jahred Love
  *
  * Redistribution and use in source and binary forms, with or without modification,
@@ -196,6 +196,7 @@ impl TokenP {
                 | Some(TokenKind::KwConst)
                 | Some(TokenKind::KwIf)
                 | Some(TokenKind::KwElse)
+                | Some(TokenKind::KwDo)
                 | Some(TokenKind::KwWhile)
                 | Some(TokenKind::KwBreak)
                 | Some(TokenKind::KwContinue)
@@ -256,6 +257,7 @@ fn kw_to_token_kind(kw: &str) -> Option<TokenKind> {
         "const" => TokenKind::KwConst,
         "if" => TokenKind::KwIf,
         "else" => TokenKind::KwElse,
+        "do" => TokenKind::KwDo,
         "while" => TokenKind::KwWhile,
         "break" => TokenKind::KwBreak,
         "continue" => TokenKind::KwContinue,

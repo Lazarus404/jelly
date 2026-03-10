@@ -259,7 +259,7 @@ int vm_push_frame_from_values(jelly_vm* vm, const jelly_bc_module* m, const jell
                               const jelly_value* args, uint32_t nargs);
 
 /* --- ops/ops_builtins.c --- */
-#define JELLY_NATIVE_BUILTIN_COUNT 4u
+#define JELLY_NATIVE_BUILTIN_COUNT 6u
 int jelly_is_native_builtin(uint32_t func_index);
 void jelly_invoke_native_builtin(exec_ctx* ctx, const jelly_insn* ins, uint32_t func_index, uint32_t first_arg_reg);
 

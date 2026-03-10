@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright 2022 - Jahred Love
  *
  * Redistribution and use in source and binary forms, with or without modification,
@@ -79,6 +79,15 @@ pub(super) fn render_stmt(s: &Stmt, info: &SemanticInfo, indent: usize, out: &mu
             for st in body {
                 render_stmt(st, info, indent + 2, out);
             }
+        }
+        StmtKind::DoWhile { body, cond } => {
+            out.push_str(&format!("{pad}do_while @{}..{}\n", span.start, span.end));
+            out.push_str(&format!("{pad}  body:\n"));
+            for st in body {
+                render_stmt(st, info, indent + 2, out);
+            }
+            out.push_str(&format!("{pad}  cond:\n"));
+            super::render_expr(cond, info, indent + 2, out);
         }
         StmtKind::Return { expr } => {
             out.push_str(&format!("{pad}return @{}..{}\n", span.start, span.end));

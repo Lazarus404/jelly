@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright 2022 - Jahred Love
  *
  * Redistribution and use in source and binary forms, with or without modification,
@@ -119,6 +119,85 @@ pub(super) fn lower_while_stmt(
     Ok(())
 }
 
+pub(super) fn lower_do_while_stmt(
+    _s: &Stmt,
+    body: &[Stmt],
+    cond: &Expr,
+    ctx: &mut LowerCtx,
+    b: &mut IrBuilder,
+) -> Result<(), CompileError> {
+    ensure_open_block(b);
+    let from = b.cur_block();
+    let body_b = b.new_block(Some("dowhile_body".to_string()));
+    let cond_b = b.new_block(Some("dowhile_cond".to_string()));
+    let exit_b = b.new_block(Some("dowhile_exit".to_string()));
+
+    b.set_block(from);
+    b.term(IrTerminator::Jmp { target: body_b });
+
+    b.set_block(body_b);
+    ctx.loop_stack.push(LoopTargets {
+        break_tgt: exit_b,
+        continue_tgt: cond_b,
+    });
+    ctx.with_env_scope(|ctx| {
+        for st in body {
+            super::super::lower_stmt(st, ctx, b)?;
+        }
+        Ok(())
+    })?;
+    ctx.loop_stack.pop();
+
+    ensure_open_block(b);
+    let tail = b.cur_block();
+    b.set_block(tail);
+    b.term(IrTerminator::Jmp { target: cond_b });
+
+    let assigned = super::super::vars_assigned_in(body);
+    let used_in_cond = super::super::vars_used_in_expr(cond);
+    let loop_vars: Vec<String> = assigned
+        .intersection(&used_in_cond)
+        .filter(|name| ctx.env_stack.iter().rev().any(|m| m.contains_key(*name)))
+        .cloned()
+        .collect();
+
+    b.set_block(cond_b);
+    let mut cond_env = HashMap::new();
+    for name in &loop_vars {
+        let bd = lookup_var(ctx, name, cond.span)?;
+        let phi_dst = b.new_vreg(bd.tid);
+        b.emit(
+            crate::ast::Span::point(0),
+            IrOp::Phi {
+                dst: phi_dst,
+                incomings: vec![(tail, bd.v)],
+            },
+        );
+        cond_env.insert(
+            name.clone(),
+            crate::lower::Binding {
+                v: phi_dst,
+                tid: bd.tid,
+                func_index: bd.func_index,
+            },
+        );
+    }
+    let (v_cond, t_cond) = ctx.with_env(cond_env, |ctx| lower_expr(cond, ctx, b))?;
+    let v_cond = if t_cond == T_BOOL {
+        v_cond
+    } else {
+        lower_truthy(cond.span, v_cond, t_cond, ctx, b)?
+    };
+    b.term(IrTerminator::JmpIf {
+        cond: v_cond,
+        then_tgt: body_b,
+        else_tgt: exit_b,
+    });
+
+    b.set_block(exit_b);
+    Ok(())
+}
+
 pub(super) fn lower_break_stmt(
     s: &Stmt,
     ctx: &mut LowerCtx,
@@ -128,7 +207,7 @@ pub(super) fn lower_break_stmt(
     let tgt = ctx
         .loop_stack
         .last()
-        .ok_or_else(|| CompileError::new(ErrorKind::Name, s.span, "break used outside of while"))?
+        .ok_or_else(|| CompileError::new(ErrorKind::Name, s.span, "break used outside of loop"))?
         .break_tgt;
     b.term(IrTerminator::Jmp { target: tgt });
     let nb = b.new_block(Some("after_break".to_string()));
@@ -146,7 +225,7 @@ pub(super) fn lower_continue_stmt(
         .loop_stack
         .last()
         .ok_or_else(|| {
-            CompileError::new(ErrorKind::Name, s.span, "continue used outside of while")
+            CompileError::new(ErrorKind::Name, s.span, "continue used outside of loop")
         })?
         .continue_tgt;
     b.term(IrTerminator::Jmp { target: tgt });

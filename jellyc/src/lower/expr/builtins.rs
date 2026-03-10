@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright 2022 - Jahred Love
  *
  * Redistribution and use in source and binary forms, with or without modification,
@@ -208,19 +208,20 @@ pub(super) fn try_lower_builtin_call(
         return Ok(Some((out, out_tid)));
     }
 
-    // I32.to_bytes(x) -> Bytes (native builtin; converts I32 to decimal string)
-    if ns == "I32" && name == "to_bytes" {
+    // Integer.to_bytes(x) -> Bytes (native builtin; converts integer to decimal string)
+    if ns == "Integer" && name == "to_bytes" {
         let arg0 = args.first().ok_or_else(|| {
-            CompileError::new(ErrorKind::Type, e.span, "I32.to_bytes expects 1 arg")
+            CompileError::new(ErrorKind::Type, e.span, "Integer.to_bytes expects 1 arg")
         })?;
         let (v_arg, t_arg) = lower_expr_expect(arg0, ctx, b)?;
-        if t_arg != T_I32 {
-            return Err(CompileError::new(
-                ErrorKind::Type,
-                arg0.span,
-                "I32.to_bytes expects I32",
-            ));
-        }
+        let v_i32 = crate::lower::expr::coerce_numeric(arg0.span, v_arg, t_arg, T_I32, b)
+            .map_err(|_| {
+                CompileError::new(
+                    ErrorKind::Type,
+                    arg0.span,
+                    "Integer.to_bytes expects numeric (integer) arg",
+                )
+            })?;
         let sig_args = [T_I32];
         let sig_id = ctx.type_ctx.intern_sig(T_BYTES, &sig_args);
         let vcallee = b.new_vreg(ctx.type_ctx.intern_fun_type(T_BYTES, &sig_args));
@@ -238,26 +239,27 @@ pub(super) fn try_lower_builtin_call(
                 dst: out,
                 callee: vcallee,
                 sig_id,
-                arg_base: v_arg,
+                arg_base: v_i32,
                 nargs: 1,
             },
         );
         return Ok(Some((out, T_BYTES)));
     }
 
-    // F64.to_bytes(x) -> Bytes (native builtin; converts F64 to string)
-    if ns == "F64" && name == "to_bytes" {
+    // Float.to_bytes(x) -> Bytes (native builtin; converts float to string)
+    if ns == "Float" && name == "to_bytes" {
         let arg0 = args.first().ok_or_else(|| {
-            CompileError::new(ErrorKind::Type, e.span, "F64.to_bytes expects 1 arg")
+            CompileError::new(ErrorKind::Type, e.span, "Float.to_bytes expects 1 arg")
         })?;
         let (v_arg, t_arg) = lower_expr_expect(arg0, ctx, b)?;
-        if t_arg != T_F64 {
-            return Err(CompileError::new(
-                ErrorKind::Type,
-                arg0.span,
-                "F64.to_bytes expects F64",
-            ));
-        }
+        let v_f64 = crate::lower::expr::coerce_numeric(arg0.span, v_arg, t_arg, T_F64, b)
+            .map_err(|_| {
+                CompileError::new(
+                    ErrorKind::Type,
+                    arg0.span,
+                    "Float.to_bytes expects numeric (float) arg",
+                )
+            })?;
         let sig_args = [T_F64];
         let sig_id = ctx.type_ctx.intern_sig(T_BYTES, &sig_args);
         let vcallee = b.new_vreg(ctx.type_ctx.intern_fun_type(T_BYTES, &sig_args));
@@ -275,11 +277,87 @@ pub(super) fn try_lower_builtin_call(
                 dst: out,
                 callee: vcallee,
                 sig_id,
-                arg_base: v_arg,
+                arg_base: v_f64,
                 nargs: 1,
             },
         );
         return Ok(Some((out, T_BYTES)));
+    }
+
+    // Float.is_nan(x) -> Bool (native builtin)
+    if ns == "Float" && name == "is_nan" {
+        let arg0 = args.first().ok_or_else(|| {
+            CompileError::new(ErrorKind::Type, e.span, "Float.is_nan expects 1 arg")
+        })?;
+        let (v_arg, t_arg) = lower_expr_expect(arg0, ctx, b)?;
+        let v_f64 = crate::lower::expr::coerce_numeric(arg0.span, v_arg, t_arg, T_F64, b)
+            .map_err(|_| {
+                CompileError::new(
+                    ErrorKind::Type,
+                    arg0.span,
+                    "Float.is_nan expects numeric arg",
+                )
+            })?;
+        let sig_args = [T_F64];
+        let sig_id = ctx.type_ctx.intern_sig(T_BOOL, &sig_args);
+        let vcallee = b.new_vreg(ctx.type_ctx.intern_fun_type(T_BOOL, &sig_args));
+        b.emit(
+            e.span,
+            IrOp::ConstFun {
+                dst: vcallee,
+                func_index: crate::jlyb::NATIVE_BUILTIN_F64_IS_NAN,
+            },
+        );
+        let out = b.new_vreg(T_BOOL);
+        b.emit(
+            e.span,
+            IrOp::Call {
+                dst: out,
+                callee: vcallee,
+                sig_id,
+                arg_base: v_f64,
+                nargs: 1,
+            },
+        );
+        return Ok(Some((out, T_BOOL)));
+    }
+
+    // Float.is_infinite(x) -> Bool (native builtin)
+    if ns == "Float" && name == "is_infinite" {
+        let arg0 = args.first().ok_or_else(|| {
+            CompileError::new(ErrorKind::Type, e.span, "Float.is_infinite expects 1 arg")
+        })?;
+        let (v_arg, t_arg) = lower_expr_expect(arg0, ctx, b)?;
+        let v_f64 = crate::lower::expr::coerce_numeric(arg0.span, v_arg, t_arg, T_F64, b)
+            .map_err(|_| {
+                CompileError::new(
+                    ErrorKind::Type,
+                    arg0.span,
+                    "Float.is_infinite expects numeric arg",
+                )
+            })?;
+        let sig_args = [T_F64];
+        let sig_id = ctx.type_ctx.intern_sig(T_BOOL, &sig_args);
+        let vcallee = b.new_vreg(ctx.type_ctx.intern_fun_type(T_BOOL, &sig_args));
+        b.emit(
+            e.span,
+            IrOp::ConstFun {
+                dst: vcallee,
+                func_index: crate::jlyb::NATIVE_BUILTIN_F64_IS_INFINITE,
+            },
+        );
+        let out = b.new_vreg(T_BOOL);
+        b.emit(
+            e.span,
+            IrOp::Call {
+                dst: out,
+                callee: vcallee,
+                sig_id,
+                arg_base: v_f64,
+                nargs: 1,
+            },
+        );
+        return Ok(Some((out, T_BOOL)));
     }
 
     if let Some(res) = numeric::try_lower_numeric_builtin(e, ns, name, args, ctx, b)? {

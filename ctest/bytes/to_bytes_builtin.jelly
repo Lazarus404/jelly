@@ -1,0 +1,7 @@
+// Integer.to_bytes and Float.to_bytes builtins for explicit numeric-to-bytes coercion
+let a = Integer.to_bytes(42);
+let b = Float.to_bytes(3.14);
+System.assert(Bytes.len(a) > 0);
+System.assert(Bytes.len(b) > 0);
+System.assert(Bytes.get_u8(a, 0) == 52);  // '4'
+"ok"

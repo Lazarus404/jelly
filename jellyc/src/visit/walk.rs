@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright 2022 - Jahred Love
  *
  * Redistribution and use in source and binary forms, with or without modification,
@@ -73,6 +73,12 @@ macro_rules! walk_stmt_body {
                     $v.visit_stmt(st)?;
                 }
                 Ok(())
+            }
+            StmtKind::DoWhile { body, cond } => {
+                for st in body {
+                    $v.visit_stmt(st)?;
+                }
+                $v.visit_expr(cond)
             }
             StmtKind::Throw { expr } => $v.visit_expr(expr),
             StmtKind::Return { expr } => {

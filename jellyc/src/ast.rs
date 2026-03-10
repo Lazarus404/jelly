@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright 2022 - Jahred Love
  *
  * Redistribution and use in source and binary forms, with or without modification,
@@ -327,6 +327,10 @@ pub enum StmtKind {
     While {
         cond: Expr,
         body: Vec<Stmt>,
+    },
+    DoWhile {
+        body: Vec<Stmt>,
+        cond: Expr,
     },
     Break,
     Continue,

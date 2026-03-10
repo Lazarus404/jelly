@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright 2022 - Jahred Love
  *
  * Redistribution and use in source and binary forms, with or without modification,
@@ -125,6 +125,16 @@ impl<'a> Infer<'a> {
                     self.infer_stmt(st)?;
                 }
                 self.scopes.pop();
+                Ok(())
+            }
+            StmtKind::DoWhile { body, cond } => {
+                self.scopes.push(HashMap::new());
+                for st in body {
+                    self.infer_stmt(st)?;
+                }
+                self.scopes.pop();
+                let tc = self.infer_expr(cond)?;
+                let _ = tc;
                 Ok(())
             }
             StmtKind::Break | StmtKind::Continue => Ok(()),

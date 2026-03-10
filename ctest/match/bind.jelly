@@ -1,0 +1,8 @@
+// Match bind: y => { use y } binds subject to variable
+let x = 42;
+let r = match (x) {
+  y => y + 1,
+  _ => 0,
+};
+System.assert(r == 43);
+"ok"

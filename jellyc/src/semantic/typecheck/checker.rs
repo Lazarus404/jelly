@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright 2022 - Jahred Love
  *
  * Redistribution and use in source and binary forms, with or without modification,
@@ -37,7 +37,7 @@ use crate::typectx::TypeCtx;
 use crate::typectx::{T_DYNAMIC, T_OBJECT};
 use crate::visit::Visitor;
 
-use super::{dispatch, is_numeric, stmt};
+use super::{dispatch, is_narrowing_numeric, is_numeric, stmt};
 
 pub(super) struct TypecheckInputs {
     pub(super) module_alias_exports: HashMap<String, HashMap<String, TypeId>>,
@@ -336,6 +336,13 @@ impl TypeChecker {
             return Ok(to);
         }
         if is_numeric(from) && is_numeric(to) {
+            if is_narrowing_numeric(from, to) {
+                return Err(CompileError::new(
+                    ErrorKind::Type,
+                    span,
+                    "implicit narrowing conversion not allowed (use explicit cast)",
+                ));
+            }
             return Ok(to);
         }
         Err(CompileError::new(

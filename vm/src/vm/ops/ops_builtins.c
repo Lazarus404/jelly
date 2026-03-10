@@ -16,7 +16,9 @@
 #define JELLY_NATIVE_BUILTIN_SYSTEM_EXIT 1u
 #define JELLY_NATIVE_BUILTIN_I32_TO_BYTES 2u
 #define JELLY_NATIVE_BUILTIN_F64_TO_BYTES 3u
-#define JELLY_NATIVE_BUILTIN_COUNT 4u
+#define JELLY_NATIVE_BUILTIN_F64_IS_NAN 4u
+#define JELLY_NATIVE_BUILTIN_F64_IS_INFINITE 5u
+#define JELLY_NATIVE_BUILTIN_COUNT 6u
 
 /* math_sqrt(x: F64) -> F64. arg_reg = first arg, dst_reg = result. */
 static void native_math_sqrt(exec_ctx* ctx, uint32_t dst_reg, uint32_t arg_reg) {
@@ -66,6 +68,18 @@ static void native_f64_to_bytes(exec_ctx* ctx, uint32_t dst_reg, uint32_t arg_re
   vm_store_ptr(&ctx->fr->rf, dst_reg, b);
 }
 
+/* Float.is_nan(x: F64) -> Bool. */
+static void native_f64_is_nan(exec_ctx* ctx, uint32_t dst_reg, uint32_t arg_reg) {
+  double x = vm_load_f64(&ctx->fr->rf, arg_reg);
+  vm_store_u32(&ctx->fr->rf, dst_reg, (uint32_t)(isnan(x) ? 1 : 0));
+}
+
+/* Float.is_infinite(x: F64) -> Bool. */
+static void native_f64_is_infinite(exec_ctx* ctx, uint32_t dst_reg, uint32_t arg_reg) {
+  double x = vm_load_f64(&ctx->fr->rf, arg_reg);
+  vm_store_u32(&ctx->fr->rf, dst_reg, (uint32_t)(isinf(x) ? 1 : 0));
+}
+
 int jelly_is_native_builtin(uint32_t func_index) {
   return func_index < JELLY_NATIVE_BUILTIN_COUNT;
 }
@@ -87,6 +101,14 @@ void jelly_invoke_native_builtin(exec_ctx* ctx, const jelly_insn* ins, uint32_t 
   }
   if(func_index == JELLY_NATIVE_BUILTIN_F64_TO_BYTES) {
     native_f64_to_bytes(ctx, ins->a, first_arg_reg);
+    return;
+  }
+  if(func_index == JELLY_NATIVE_BUILTIN_F64_IS_NAN) {
+    native_f64_is_nan(ctx, ins->a, first_arg_reg);
+    return;
+  }
+  if(func_index == JELLY_NATIVE_BUILTIN_F64_IS_INFINITE) {
+    native_f64_is_infinite(ctx, ins->a, first_arg_reg);
     return;
   }
   jelly_vm_panic();

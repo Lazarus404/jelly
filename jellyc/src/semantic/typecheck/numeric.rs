@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright 2022 - Jahred Love
  *
  * Redistribution and use in source and binary forms, with or without modification,
@@ -57,4 +57,26 @@ pub(super) fn join_numeric(a: TypeId, b: TypeId) -> TypeId {
     } else {
         b
     }
+}
+
+/// True if converting from `from` to `to` is a narrowing conversion (may lose precision/range).
+/// Per language spec: no implicit downward casting; narrowing produces a compiler error.
+pub(super) fn is_narrowing_numeric(from: TypeId, to: TypeId) -> bool {
+    let r_from = numeric_rank(from);
+    let r_to = numeric_rank(to);
+    if r_from == 255 || r_to == 255 {
+        return false;
+    }
+    // Float to int: always narrowing
+    let from_int = r_from <= 3;
+    let to_int = r_to <= 3;
+    if !from_int && to_int {
+        return true;
+    }
+    // Same category: narrowing when from has higher rank
+    if from_int == to_int {
+        return r_from > r_to;
+    }
+    // Int to float: not narrowing
+    false
 }

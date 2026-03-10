@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright 2022 - Jahred Love
  *
  * Redistribution and use in source and binary forms, with or without modification,
@@ -67,6 +67,12 @@ impl Expander {
                 for st in body {
                     self.shift_stmt_spans(st, delta);
                 }
+            }
+            StmtKind::DoWhile { body, cond } => {
+                for st in body {
+                    self.shift_stmt_spans(st, delta);
+                }
+                self.shift_expr_spans(cond, delta);
             }
             StmtKind::Return { expr } => {
                 if let Some(e) = expr {

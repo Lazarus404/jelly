@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright 2022 - Jahred Love
  *
  * Redistribution and use in source and binary forms, with or without modification,
@@ -59,7 +59,25 @@ mod vm;
 
 fn usage() -> ! {
     eprintln!(
-        "usage:\n  jellyc prelude --out <prelude.jlyb>\n  jellyc <input.jelly> [--out <output.jlyb>] [--backend ir]\n  jellyc <input.jelly> --dump ast|hir|ir\n  jellyc [--repl [<file.jelly>]]\n\naliases:\n  --ast == --dump ast\n  --hir == --dump hir\n  --ir  == --dump ir\n\nREPL:\n  jellyc              Start REPL (no preload)\n  jellyc --repl        Start REPL (no preload)\n  jellyc --repl <file> Start REPL with <file.jelly> preloaded\n  Exit REPL by calling exit() or System.exit() (CTRL+C cancels input only)\n\nnotes:\n  The AST bytecode backend has been removed; all compilation goes through the IR pipeline."
+r#"usage:
+  jellyc prelude --out <prelude.jlyb>
+  jellyc <input.jelly> [--out <output.jlyb>] [--backend ir]
+  jellyc <input.jelly> --dump ast|hir|ir
+  jellyc [--repl [<file.jelly>]]
+
+aliases:
+  --ast == --dump ast
+  --hir == --dump hir
+  --ir  == --dump ir
+
+REPL:
+  jellyc              Start REPL (no preload)
+  jellyc --repl        Start REPL (no preload)
+  jellyc --repl <file> Start REPL with <file.jelly> preloaded
+  Exit REPL by calling exit() or System.exit() (CTRL+C cancels input only)
+
+notes:
+  The AST bytecode backend has been removed; all compilation goes through the IR pipeline."#
     );
     exit(2);
 }
@@ -135,19 +153,6 @@ fn main() {
             "--out" => {
                 let p = args.next().unwrap_or_else(|| usage());
                 out = Some(PathBuf::from(p));
-            }
-            "--backend" => {
-                let b = args.next().unwrap_or_else(|| usage());
-                match b.as_str() {
-                    "ir" => {}
-                    "ast" => {
-                        eprintln!(
-                            "error: AST backend removed; use `--backend ir` (or omit the flag)."
-                        );
-                        exit(2);
-                    }
-                    _ => usage(),
-                }
             }
             "--dump" => {
                 let d = args.next().unwrap_or_else(|| usage());

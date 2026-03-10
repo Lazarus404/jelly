@@ -27,26 +27,26 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-// Compilation orchestration: IR backend entry points.
-//
-// ## Pipeline overview (source modules)
-//
-// - **parse** (`parse::parse_program`)
-// - **expand templates** (`templates::expand_templates`)
-// - **frontend preparation** (`frontend::prepare_program`):
-//   truthiness normalization + name resolution (and any future frontend passes)
-// - **semantic analysis** (`semantic::analyze_prepared_*`):
-//   typecheck + capture analysis, producing `(HIR, SemanticInfo)`
-// - **lowering to IR** (`lower::*`)
-// - **optimization passes** (`opt::*`)
-// - **phi elimination + cleanup** (`phi::*`)
-// - **codegen + validation** (`codegen::*`, `jlyb::validate_module`)
-//
-// ### Key invariant
-//
-// All semantic + lowering entry points in this file operate on programs that have already been
-// prepared via the frontend. This happens during module-graph loading (`link::load_module_graph`)
-// and is represented explicitly via `frontend::PreparedProgram`.
+//! Compilation orchestration: IR backend entry points.
+//!
+//! ## Pipeline overview (source modules)
+//!
+//! - **parse** (`parse::parse_program`)
+//! - **expand templates** (`templates::expand_templates`)
+//! - **frontend preparation** (`frontend::prepare_program`):
+//!   truthiness normalization + name resolution (and any future frontend passes)
+//! - **semantic analysis** (`semantic::analyze_prepared_*`):
+//!   typecheck + capture analysis, producing `(HIR, SemanticInfo)`
+//! - **lowering to IR** (`lower::*`)
+//! - **optimization passes** (`opt::*`)
+//! - **phi elimination + cleanup** (`phi::*`)
+//! - **codegen + validation** (`codegen::*`, `jlyb::validate_module`)
+//!
+//! ### Key invariant
+//!
+//! All semantic + lowering entry points in this file operate on programs that have already been
+//! prepared via the frontend. This happens during module-graph loading (`link::load_module_graph`)
+//! and is represented explicitly via `frontend::PreparedProgram`.
 use std::collections::HashMap;
 use std::path::Path;
 

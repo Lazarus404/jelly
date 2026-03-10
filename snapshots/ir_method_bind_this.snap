@@ -20,7 +20,7 @@ ir {
       v10: Bytes
     b0 (entry):
       @0..0 ObjNew { dst: v0 }
-      @32..61 ConstFun { dst: v2, func_index: 10 }
+      @32..61 ConstFun { dst: v2, func_index: 12 }
       @0..62 Mov { dst: v1, src: v2 }
       @71..83 ObjNew { dst: v3 }
       @71..83 ObjSetAtom { obj: v3, atom: "inc", value: v1 }
@@ -32,7 +32,7 @@ ir {
       @125..130 Call { dst: v9, callee: v6, sig_id: 1, arg_base: v8, nargs: 1 }
       @132..136 ConstBytes { dst: v10, len: 2 }
       term: Ret { value: v10 }
-  fn[1] lambda10 params=2 entry=b0
+  fn[1] lambda12 params=2 entry=b0
     vregs:
       v0: Object
       v1: I32
@@ -40,7 +40,7 @@ ir {
       v3: I32
       v4: I32
     b0 (entry):
-      @32..61 ConstFun { dst: v2, func_index: 10 }
+      @32..61 ConstFun { dst: v2, func_index: 12 }
       term: Jmp { target: b1 }
     b1 (fn_body):
       @57..58 ConstI32 { dst: v3, imm: 1 }

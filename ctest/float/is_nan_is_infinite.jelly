@@ -1,0 +1,25 @@
+// Float.is_nan and Float.is_infinite for NaN/Inf edge cases
+// Normal values
+let normal: F64 = 3.14;
+System.assert(!Float.is_nan(normal));
+System.assert(!Float.is_infinite(normal));
+
+// Integer coerces to float: 42.0 is neither NaN nor Inf
+System.assert(!Float.is_nan(42));
+System.assert(!Float.is_infinite(42));
+
+// NaN from 0/0
+let nan: F64 = 0.0 / 0.0;
+System.assert(Float.is_nan(nan));
+System.assert(!Float.is_infinite(nan));
+
+// Inf from 1/0 (separate block to avoid regalloc interaction)
+let pos_inf: F64 = 1.0 / 0.0;
+System.assert(Float.is_infinite(pos_inf));
+System.assert(!Float.is_nan(pos_inf));
+
+let neg_inf: F64 = -1.0 / 0.0;
+System.assert(Float.is_infinite(neg_inf));
+System.assert(!Float.is_nan(neg_inf));
+
+"ok"

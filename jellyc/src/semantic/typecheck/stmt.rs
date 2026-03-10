@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright 2022 - Jahred Love
  *
  * Redistribution and use in source and binary forms, with or without modification,
@@ -97,6 +97,7 @@ pub(super) fn check_stmt(tc: &mut TypeChecker, s: &Stmt) -> Result<(), CompileEr
         } => check_let(tc, s, *is_const, name, type_params, ty.as_ref(), expr),
         StmtKind::Assign { name, expr } => check_assign(tc, s, name, expr),
         StmtKind::While { cond, body } => check_while(tc, cond, body),
+        StmtKind::DoWhile { body, cond } => check_do_while(tc, body, cond),
         StmtKind::Break | StmtKind::Continue => Ok(()),
         StmtKind::Throw { expr } => {
             let _ = tc.check_expr(expr, None)?;
@@ -213,6 +214,21 @@ fn check_while(tc: &mut TypeChecker, cond: &Expr, body: &[Stmt]) -> Result<(), C
         }
         Ok(())
     })
+}
+
+fn check_do_while(
+    tc: &mut TypeChecker,
+    body: &[Stmt],
+    cond: &Expr,
+) -> Result<(), CompileError> {
+    tc.with_scope(|tc| {
+        for st in body {
+            tc.check_stmt(st)?;
+        }
+        Ok(())
+    })?;
+    let _ = tc.check_expr(cond, None)?;
+    Ok(())
 }
 
 fn check_return(tc: &mut TypeChecker, expr: Option<&Expr>) -> Result<(), CompileError> {
